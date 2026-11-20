@@ -49,6 +49,9 @@ ARABIC_TEXT = (
     "مرحباً، هذا اختبار لتوليد الصوت باللغة العربية الفصحى. "
     "السنة الحالية هي 2026، والنص يحتفظ بعلامات التشكيل."
 )
+# The worst case recorded in docs/performance_data.json: one long paragraph per
+# MMS voice, because those two models are the slowest part of the project.
+LONG_AR = (ARABIC_TEXT + " ") * 8
 
 
 class _PMC(ctypes.Structure):
@@ -183,6 +186,20 @@ def run_mms_case(profile: str, text: str, label: str) -> None:
 
 
 def main() -> None:
+    if "--mms-long" in sys.argv:
+        # Only the long MMS case(s); used to refresh the rows in
+        # docs/performance_data.json without re-timing the whole Piper sweep.
+        # Pass one profile to measure it alone, so peak RSS reflects a single
+        # loaded model exactly like the running application.
+        index = sys.argv.index("--mms-long")
+        only = sys.argv[index + 1] if len(sys.argv) > index + 1 else ""
+        if only in ("", "mms_kmr"):
+            run_mms_case("mms_kmr", LONG, "mms_kmr_long")
+        if only in ("", "mms_ara"):
+            run_mms_case("mms_ara", LONG_AR, "mms_ara_long")
+        print(f"PYTHON PEAK RSS: {peak_rss_mb():.2f} MB")
+        return
+
     settings = AppSettings()
     engine = KurmanjiTTSEngine(
         piper_path=Path(settings.piper_path),

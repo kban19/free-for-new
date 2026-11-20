@@ -42,9 +42,13 @@ def start_chapter(ctx, number: int) -> None:
 
 
 def chapter_heading(doc, ctx, ordinal: str, title: str) -> None:
-    """Bold 16 pt chapter title, starting on a new page."""
-    D.heading(doc, f"{ordinal}: {title}", 1, rtl=True, align="center",
-              space_before=0, space_after=18)
+    """Bold 16 pt chapter title at the start (right) margin, on a new page.
+
+    The Rojava guide right-aligns level-1 headings; only the covers and the
+    abstracts are centred, so chapter titles use ``start`` here.
+    """
+    D.heading(doc, f"{ordinal}: {title}", 1, rtl=True, align="start",
+              size=16, bold=True, space_before=0, space_after=18)
 
 
 def h2(doc, text: str) -> None:

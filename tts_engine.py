@@ -4,12 +4,18 @@
 
 """TTS engines behind one contract: Piper Kurmanji and the two Meta MMS voices.
 
-Every engine here exposes the same two methods — ``check_status()`` and
-``synthesize()`` — and returns the same ``EngineStatus`` / ``SynthesisResult``
-objects. That shared contract is why the UI never needed to change when the MMS
-engines were added, and why a new voice only has to be registered in
-``UnifiedTTSEngine``. All output passes through ``verify_wav_file`` before it is
-reported as a success.
+The file has three parts, in this order:
+
+1. the shared vocabulary (errors, dataclasses, WAV validation, helpers);
+2. one class per engine — ``KurmanjiTTSEngine`` (Piper CLI) and
+   ``SherpaMMSEngine`` (sherpa-onnx) — each exposing exactly
+   ``check_status()``, ``synthesize()`` and ``close()``;
+3. ``UnifiedTTSEngine``, the router that picks one of them by profile name.
+
+Because both engines answer the same three calls, the UI never needed to change
+when the MMS voices were added, and a new voice only has to be registered in
+``UnifiedTTSEngine``. Every output passes through ``verify_wav_file`` before it
+is reported as a success.
 """
 
 from __future__ import annotations
@@ -30,7 +36,14 @@ from typing import Dict, List, Optional, Tuple
 from config import DEFAULT_SPEAKER_ID, get_app_root
 from locales import msg
 
+# Piper is a console program; on Windows it must not flash a black window each
+# time the one-shot fallback starts.
+_NO_WINDOW = (
+    getattr(subprocess, "CREATE_NO_WINDOW", 0) if platform.system() == "Windows" else 0
+)
 
+
+# --------------------------------------------------------------- vocabulary
 class TTSEngineError(Exception):
     """Raised when model validation, Piper execution, or WAV output fails."""
 
@@ -68,7 +81,7 @@ class SynthesisResult:
 
 @dataclass(frozen=True)
 class EngineStatus:
-    """Readiness status of Piper executable and Kurmanji ONNX model."""
+    """Readiness status of an engine and its model files."""
 
     ready: bool
     piper_exists: bool
@@ -78,6 +91,102 @@ class EngineStatus:
     metadata: Optional[ModelMetadata] = None
 
 
+# ------------------------------------------------------------ shared helpers
+def _status(
+    ready: bool,
+    piper_exists: bool,
+    model_exists: bool,
+    config_exists: bool,
+    message: str,
+    metadata: Optional[ModelMetadata] = None,
+) -> EngineStatus:
+    """Build a status in one place, so both engines report the same fields."""
+    return EngineStatus(
+        ready=ready,
+        piper_exists=piper_exists,
+        model_exists=model_exists,
+        config_exists=config_exists,
+        message=message,
+        metadata=metadata,
+    )
+
+
+def _prepare_output(output_wav: Path) -> Path:
+    """Create the folder and delete a stale file, so a crash cannot look like success."""
+    output_wav = Path(output_wav)
+    output_wav.parent.mkdir(parents=True, exist_ok=True)
+    if output_wav.exists():
+        output_wav.unlink()
+    return output_wav
+
+
+def _finish_result(
+    output_wav: Path, started: float, speaker_id: int, text: str, mode_used: str
+) -> SynthesisResult:
+    """Measure, validate the WAV, then build the result both engines return.
+
+    Timing includes writing the file, not just inference, because that is what
+    the user actually waits for. RTF is generation time over audio duration.
+    """
+    generation_time = max(1e-6, time.perf_counter() - started)
+    sample_rate, duration = verify_wav_file(output_wav)
+    return SynthesisResult(
+        wav_path=output_wav,
+        duration_seconds=round(duration, 3),
+        generation_time_seconds=round(generation_time, 3),
+        real_time_factor=round(generation_time / max(duration, 1e-6), 4),
+        sample_rate=sample_rate,
+        speaker_id=speaker_id,
+        text_length=len(text),
+        mode_used=mode_used,
+    )
+
+
+def verify_wav_file(wav_path: Path) -> Tuple[int, float]:
+    """Validate that a WAV file exists with valid RIFF/PCM headers; return (rate, duration)."""
+    if not wav_path.exists():
+        raise TTSEngineError(msg("err_wav_missing", path=wav_path))
+
+    file_size = wav_path.stat().st_size
+    if file_size <= 44:
+        raise TTSEngineError(msg("err_wav_empty", size=file_size))
+
+    try:
+        with wave.open(str(wav_path), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if frames <= 0 or rate <= 0:
+                raise TTSEngineError(msg("err_wav_frames"))
+            return rate, frames / float(rate)
+    except wave.Error as exc:
+        raise TTSEngineError(msg("err_wav_header", error=exc)) from exc
+
+
+class BaseTTSEngine:
+    """The three-call contract every engine in this file honours."""
+
+    def check_status(self) -> EngineStatus:
+        """Report whether the model files are present and loadable."""
+        raise NotImplementedError
+
+    def synthesize(
+        self,
+        text: str,
+        output_wav: Path,
+        speaker_id: Optional[int] = None,
+        length_scale: Optional[float] = None,
+        noise_scale: Optional[float] = None,
+        noise_w: Optional[float] = None,
+        timeout: float = 60.0,
+    ) -> SynthesisResult:
+        """Convert text to a validated WAV file and return its measurements."""
+        raise NotImplementedError
+
+    def close(self) -> None:
+        """Release whatever the engine keeps in memory."""
+
+
+# ------------------------------------------------------------ Piper metadata
 def _load_speaker_display_labels(model_dir: Path) -> Dict[int, str]:
     """Build short one-line speaker labels from an optional speaker_metadata.json."""
     metadata_path = Path(model_dir) / "speaker_metadata.json"
@@ -217,27 +326,6 @@ def parse_model_metadata(model_path: Path, preferred_speaker: int = 54) -> Model
     )
 
 
-def verify_wav_file(wav_path: Path) -> Tuple[int, float]:
-    """Validate that a WAV file exists, has valid RIFF/PCM headers, and return (sample_rate, duration)."""
-    if not wav_path.exists():
-        raise TTSEngineError(msg("err_wav_missing", path=wav_path))
-
-    file_size = wav_path.stat().st_size
-    if file_size <= 44:
-        raise TTSEngineError(msg("err_wav_empty", size=file_size))
-
-    try:
-        with wave.open(str(wav_path), "rb") as wf:
-            frames = wf.getnframes()
-            rate = wf.getframerate()
-            if frames <= 0 or rate <= 0:
-                raise TTSEngineError(msg("err_wav_frames"))
-            duration = frames / float(rate)
-            return rate, duration
-    except wave.Error as exc:
-        raise TTSEngineError(msg("err_wav_header", error=exc)) from exc
-
-
 def _wait_for_stable_wav(proc: subprocess.Popen, output_wav: Path, timeout: float) -> bool:
     """Wait until Piper finishes writing, i.e. the WAV stops growing.
 
@@ -264,7 +352,8 @@ def _wait_for_stable_wav(proc: subprocess.Popen, output_wav: Path, timeout: floa
     return False
 
 
-class KurmanjiTTSEngine:
+# ------------------------------------------------------------- Piper engine
+class KurmanjiTTSEngine(BaseTTSEngine):
     """Thread-safe Piper CLI wrapper supporting persistent warm-model synthesis."""
 
     def __init__(
@@ -314,55 +403,49 @@ class KurmanjiTTSEngine:
 
     def check_status(self) -> EngineStatus:
         """Verify Piper binary and model files without synthesizing audio."""
-        piper_exists = self.piper_path.exists() and self.piper_path.is_file()
-        model_exists = self.model_path.exists() and self.model_path.is_file()
+        piper_exists = self.piper_path.is_file()
+        model_exists = self.model_path.is_file()
         config_exists = (
             Path(f"{self.model_path}.json").exists()
             or self.model_path.with_suffix(".json").exists()
         )
-
         if not piper_exists:
-            return EngineStatus(
-                ready=False,
-                piper_exists=False,
-                model_exists=model_exists,
-                config_exists=config_exists,
-                message=msg("status_piper_missing", path=self.piper_path),
+            return _status(
+                False, False, model_exists, config_exists,
+                msg("status_piper_missing", path=self.piper_path),
             )
-
         if not model_exists or not config_exists:
-            return EngineStatus(
-                ready=False,
-                piper_exists=True,
-                model_exists=model_exists,
-                config_exists=config_exists,
-                message=msg("status_files_incomplete", path=self.model_path.parent),
+            return _status(
+                False, True, model_exists, config_exists,
+                msg("status_files_incomplete", path=self.model_path.parent),
             )
-
         try:
             self._ensure_executable_permission()
             meta = parse_model_metadata(self.model_path, self.preferred_speaker)
             self._metadata = meta
-            return EngineStatus(
-                ready=True,
-                piper_exists=True,
-                model_exists=True,
-                config_exists=True,
-                message=msg(
-                    "status_ready_detail",
-                    rate=meta.sample_rate,
-                    speakers=meta.num_speakers,
-                ),
-                metadata=meta,
+            return _status(
+                True, True, True, True,
+                msg("status_ready_detail", rate=meta.sample_rate,
+                    speakers=meta.num_speakers),
+                meta,
             )
         except TTSEngineError as exc:
-            return EngineStatus(
-                ready=False,
-                piper_exists=True,
-                model_exists=True,
-                config_exists=config_exists,
-                message=str(exc),
-            )
+            return _status(False, True, True, config_exists, str(exc))
+
+    # ---------------------------------------------------------- piper process
+    def _base_command(self) -> List[str]:
+        """The two arguments every Piper invocation shares."""
+        return [str(self.piper_path), "--model", str(self.model_path)]
+
+    def _voice_flags(
+        self, length_scale: float, noise_scale: float, noise_w: float
+    ) -> List[str]:
+        """Voice parameters are CLI flags: Piper ignores them in JSON input."""
+        return [
+            "--length_scale", str(float(length_scale)),
+            "--noise_scale", str(float(noise_scale)),
+            "--noise_w", str(float(noise_w)),
+        ]
 
     def _start_persistent_process(
         self,
@@ -373,9 +456,8 @@ class KurmanjiTTSEngine:
         """Start Piper in --json-input mode so ONNX weights remain cached in RAM.
 
         Real Piper only reads ``text``, ``output_file`` and (for multi-speaker
-        voices) ``speaker_id`` from a JSON input line. Voice parameters must
-        therefore be supplied as CLI flags.
-        The warm process is recycled whenever any of them changes.
+        voices) ``speaker_id`` from a JSON input line, so the voice parameters
+        are CLI flags here. The warm process is recycled whenever one changes.
         """
         model_key = (
             f"{self.piper_path.resolve()}::{self.model_path.resolve()}::"
@@ -389,19 +471,9 @@ class KurmanjiTTSEngine:
             return self._proc
 
         self.close()
-        cmd = [
-            str(self.piper_path),
-            "--model",
-            str(self.model_path),
-            "--json-input",
-            "--length_scale",
-            str(float(length_scale)),
-            "--noise_scale",
-            str(float(noise_scale)),
-            "--noise_w",
-            str(float(noise_w)),
-        ]
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if platform.system() == "Windows" else 0
+        cmd = self._base_command() + ["--json-input"] + self._voice_flags(
+            length_scale, noise_scale, noise_w
+        )
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
@@ -411,13 +483,13 @@ class KurmanjiTTSEngine:
             # one-shot fallback, which captures stderr.
             stderr=subprocess.DEVNULL,
             cwd=str(self.piper_path.parent),
-            creationflags=creationflags,
+            creationflags=_NO_WINDOW,
         )
         self._proc = proc
         self._loaded_model_key = model_key
         return proc
 
-    def _synthesize_persistent(
+    def _synthesize_warm(
         self,
         text: str,
         output_wav: Path,
@@ -427,22 +499,17 @@ class KurmanjiTTSEngine:
         noise_w: float,
         timeout: float,
     ) -> bool:
-        """Attempt synthesis via warm persistent Piper process; return False if fallback needed."""
+        """Try the warm process; return False when the caller must fall back."""
         try:
             proc = self._start_persistent_process(length_scale, noise_scale, noise_w)
             if proc.stdin is None:
                 return False
-
             # Only these keys are part of Piper's JSON input schema. Single-speaker
             # voices (e.g. the Arabic Kareem model) crash when speaker_id is sent.
-            payload = {
-                "text": text,
-                "output_file": str(output_wav.resolve()),
-            }
+            payload = {"text": text, "output_file": str(output_wav.resolve())}
             if self._metadata is None or self._metadata.num_speakers > 1:
                 payload["speaker_id"] = int(speaker_id)
-            line = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
-            proc.stdin.write(line)
+            proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
             proc.stdin.flush()
 
             if _wait_for_stable_wav(proc, output_wav, timeout):
@@ -464,22 +531,10 @@ class KurmanjiTTSEngine:
         timeout: float,
     ) -> None:
         """Run Piper CLI as a single-shot subprocess with UTF-8 stdin."""
-        cmd = [
-            str(self.piper_path),
-            "--model",
-            str(self.model_path),
-            "--speaker",
-            str(int(speaker_id)),
-            "--output_file",
-            str(output_wav.resolve()),
-            "--length_scale",
-            str(float(length_scale)),
-            "--noise_scale",
-            str(float(noise_scale)),
-            "--noise_w",
-            str(float(noise_w)),
-        ]
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if platform.system() == "Windows" else 0
+        cmd = self._base_command() + [
+            "--speaker", str(int(speaker_id)),
+            "--output_file", str(output_wav.resolve()),
+        ] + self._voice_flags(length_scale, noise_scale, noise_w)
         try:
             completed = subprocess.run(
                 cmd,
@@ -488,7 +543,7 @@ class KurmanjiTTSEngine:
                 stderr=subprocess.PIPE,
                 cwd=str(self.piper_path.parent),
                 timeout=timeout,
-                creationflags=creationflags,
+                creationflags=_NO_WINDOW,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
@@ -507,6 +562,28 @@ class KurmanjiTTSEngine:
                     error=stderr_msg or msg("err_unknown"),
                 )
             )
+
+    def _render_wav(
+        self,
+        text: str,
+        output_wav: Path,
+        sid: int,
+        ls: float,
+        ns: float,
+        nw: float,
+        timeout: float,
+    ) -> str:
+        """Run Piper and report which mode produced the file.
+
+        The warm process is tried first. Any failure there (crash, broken pipe,
+        timeout) silently falls back to a one-shot run, so the user still gets
+        audio instead of an error they cannot act on.
+        """
+        params = (text, output_wav, sid, ls, ns, nw, timeout)
+        if self.use_persistent_process and self._synthesize_warm(*params):
+            return "persistent-json-cli"
+        self._synthesize_oneshot(*params)
+        return "oneshot-cli"
 
     def _resolve_synthesis_params(
         self,
@@ -527,51 +604,6 @@ class KurmanjiTTSEngine:
             )
         return ls, ns, nw, sid
 
-    def _render_wav(
-        self,
-        text: str,
-        output_wav: Path,
-        sid: int,
-        ls: float,
-        ns: float,
-        nw: float,
-        timeout: float,
-    ) -> str:
-        """Run Piper and report which mode produced the file.
-
-        The warm process is tried first. Any failure there (crash, broken pipe,
-        timeout) silently falls back to a one-shot run, so the user still gets
-        audio instead of an error they cannot act on.
-        """
-        def run_oneshot() -> None:
-            self._synthesize_oneshot(
-                text=text,
-                output_wav=output_wav,
-                speaker_id=sid,
-                length_scale=ls,
-                noise_scale=ns,
-                noise_w=nw,
-                timeout=timeout,
-            )
-
-        if not self.use_persistent_process:
-            run_oneshot()
-            return "oneshot-cli"
-
-        warmed = self._synthesize_persistent(
-            text=text,
-            output_wav=output_wav,
-            speaker_id=sid,
-            length_scale=ls,
-            noise_scale=ns,
-            noise_w=nw,
-            timeout=timeout,
-        )
-        if warmed:
-            return "persistent-json-cli"
-        run_oneshot()
-        return "oneshot-cli"
-
     def synthesize(
         self,
         text: str,
@@ -586,64 +618,46 @@ class KurmanjiTTSEngine:
 
         The whole call is held under a re-entrant lock so two quick clicks cannot
         feed the same warm Piper process at once. The caller is expected to run
-        it on a worker thread (``asyncio.to_thread``), never on the UI thread.
+        it on a worker thread ('asyncio.to_thread'), never on the UI thread.
         """
         with self._lock:
             status = self.check_status()
             if not status.ready or status.metadata is None:
                 raise TTSEngineError(status.message)
 
-            meta = status.metadata
             ls, ns, nw, sid = self._resolve_synthesis_params(
-                meta, speaker_id, length_scale, noise_scale, noise_w
+                status.metadata, speaker_id, length_scale, noise_scale, noise_w
             )
-
-            output_wav = Path(output_wav)
-            output_wav.parent.mkdir(parents=True, exist_ok=True)
-            if output_wav.exists():
-                output_wav.unlink()
-
+            output_wav = _prepare_output(output_wav)
             started = time.perf_counter()
             mode_used = self._render_wav(text, output_wav, sid, ls, ns, nw, timeout)
-
-            gen_time = max(1e-6, time.perf_counter() - started)
-            sample_rate, duration = verify_wav_file(output_wav)
-            rtf = round(gen_time / max(duration, 1e-6), 4)
-
-            return SynthesisResult(
-                wav_path=output_wav,
-                duration_seconds=round(duration, 3),
-                generation_time_seconds=round(gen_time, 3),
-                real_time_factor=rtf,
-                sample_rate=sample_rate,
-                speaker_id=sid,
-                text_length=len(text),
-                mode_used=mode_used,
-            )
+            return _finish_result(output_wav, started, sid, text, mode_used)
 
     def close(self) -> None:
         """Terminate warm Piper subprocess cleanly and free system RAM."""
         with self._lock:
-            if self._proc is not None:
+            if self._proc is None:
+                return
+            try:
+                if self._proc.stdin:
+                    self._proc.stdin.close()
+                self._proc.terminate()
+                self._proc.wait(timeout=2.0)
+            except Exception:
                 try:
-                    if self._proc.stdin:
-                        self._proc.stdin.close()
-                    self._proc.terminate()
-                    self._proc.wait(timeout=2.0)
+                    self._proc.kill()
                 except Exception:
-                    try:
-                        self._proc.kill()
-                    except Exception:
-                        pass
-                finally:
-                    self._proc = None
-                    self._loaded_model_key = None
+                    pass
+            finally:
+                self._proc = None
+                self._loaded_model_key = None
 
     def __del__(self) -> None:
         self.close()
 
 
-class SherpaMMSEngine:
+# -------------------------------------------------------------- MMS engine
+class SherpaMMSEngine(BaseTTSEngine):
     """Meta MMS-TTS voice run through sherpa-onnx, kept warm in RAM.
 
     MMS models use a single-character vocabulary instead of phonemes, which is why
@@ -703,23 +717,16 @@ class SherpaMMSEngine:
             model_exists = onnx_path.is_file()
             tokens_exist = tokens_path.is_file()
             if not model_exists or not tokens_exist:
-                return EngineStatus(
-                    ready=False,
-                    piper_exists=True,
-                    model_exists=model_exists,
-                    config_exists=tokens_exist,
-                    message=msg("status_files_incomplete", path=self.model_dir),
+                return _status(
+                    False, True, model_exists, tokens_exist,
+                    msg("status_files_incomplete", path=self.model_dir),
                 )
 
             if self._tts is None:
                 self._tts, error = self._load_sherpa_tts(onnx_path, tokens_path)
                 if self._tts is None:
-                    return EngineStatus(
-                        ready=False,
-                        piper_exists=True,
-                        model_exists=True,
-                        config_exists=True,
-                        message=error or msg("err_unknown"),
+                    return _status(
+                        False, True, True, True, error or msg("err_unknown")
                     )
 
             sample_rate = int(self._tts.sample_rate)
@@ -736,13 +743,10 @@ class SherpaMMSEngine:
                 inference_noise_scale=0.667,
                 inference_noise_w=0.8,
             )
-            return EngineStatus(
-                ready=True,
-                piper_exists=True,
-                model_exists=True,
-                config_exists=True,
-                message=msg("status_ready_detail", rate=sample_rate, speakers=1),
-                metadata=self._metadata,
+            return _status(
+                True, True, True, True,
+                msg("status_ready_detail", rate=sample_rate, speakers=1),
+                self._metadata,
             )
 
     @staticmethod
@@ -790,26 +794,12 @@ class SherpaMMSEngine:
             speed = 1.0 / float(length_scale) if length_scale else 1.0
             speed = max(0.1, min(10.0, speed))
 
-            output_wav = Path(output_wav)
-            output_wav.parent.mkdir(parents=True, exist_ok=True)
-            if output_wav.exists():
-                output_wav.unlink()
-
-            t0 = time.perf_counter()
+            output_wav = _prepare_output(output_wav)
+            started = time.perf_counter()
             audio = self._tts.generate(text, sid=0, speed=speed)
             self._write_pcm_wav(output_wav, audio.samples, int(self._tts.sample_rate))
-
-            generation_time = max(1e-6, time.perf_counter() - t0)
-            sample_rate, duration = verify_wav_file(output_wav)
-            return SynthesisResult(
-                wav_path=output_wav,
-                duration_seconds=round(duration, 3),
-                generation_time_seconds=round(generation_time, 3),
-                real_time_factor=round(generation_time / max(duration, 1e-6), 4),
-                sample_rate=sample_rate,
-                speaker_id=0,
-                text_length=len(text),
-                mode_used="sherpa-onnx-cpu",
+            return _finish_result(
+                output_wav, started, 0, text, "sherpa-onnx-cpu"
             )
 
     def close(self) -> None:
@@ -818,6 +808,7 @@ class SherpaMMSEngine:
             self._metadata = None
 
 
+# ------------------------------------------------------------------ router
 class UnifiedTTSEngine:
     """Route synthesis to Piper Kurmanji or one of the two Meta MMS voices."""
 
@@ -851,12 +842,14 @@ class UnifiedTTSEngine:
         self.profile = engine_profile if engine_profile in self.PROFILES else "piper_kmr"
 
     @property
-    def engine(self):
+    def engine(self) -> BaseTTSEngine:
+        """The engine behind the active profile."""
         if self.profile == "piper_kmr":
             return self.piper
         return self.mms[self.profile]
 
     def set_profile(self, profile: str) -> str:
+        """Activate one profile and free the RAM of the others."""
         chosen = profile if profile in self.PROFILES else "piper_kmr"
         for name, engine in self.mms.items():
             if name != chosen:

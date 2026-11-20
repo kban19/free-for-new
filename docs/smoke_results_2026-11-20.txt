@@ -1,6 +1,6 @@
 # سجل خام لاختبار المحرك الحقيقي (real_engine_smoke.py)
 # التاريخ: 2026-11-20
-# الأمر: .build-venv\Scripts\python.exe tests\real_engine_smoke.py
+# الأمر:  python tests/real_engine_smoke.py   (بمفسّر .build-venv/Scripts/python.exe من جذر المشروع)
 # البيئة: Windows 11 Pro 10.0.26100 | Intel Core i5-10500H @ 2.50GHz | 6 cores / 12 threads | 15.8 GB RAM
 # الغرض: إثبات أن إعادة الهيكلة لم تغيّر سلوك المحركات الثلاثة، وتوفير قياسات قابلة للتحقق.
 
@@ -32,5 +32,23 @@ mms_kmr_short            mode=sherpa-onnx-cpu      spk= 0 chars=  60 audio=  4.7
 STATUS ready=True :: النموذج جاهز (16000 Hz | 1 متحدث)
 mms_ara_arabic           mode=sherpa-onnx-cpu      spk= 0 chars=  97 audio= 10.42s gen= 3.18s RTF= 0.30 16000Hz RMS= 3663.8 size=  325.6KB
 PYTHON PEAK RSS: 368.58 MB
+
+---
+--- MMS LONG-TEXT CASE (the worst case recorded in performance_data.json) ---
+# الغرض: قياس أطول حالة لكل نموذج MMS، وهي مرجع أرقام الفصل الرابع.
+# الأمر:  python tests/real_engine_smoke.py   (بمفسّر .build-venv/Scripts/python.exe من جذر المشروع)
+# الأمر:  python tests/real_engine_smoke.py   (بمفسّر .build-venv/Scripts/python.exe من جذر المشروع)
+# تشغيل منفصل لكل نموذج حتى تعكس ذروة الذاكرة نموذجاً واحداً محمّلاً كما في التطبيق.
+# (نُفّذت الأوامر بمفسّر .build-venv/Scripts/python.exe في جذر المشروع.)
+
+--- MMS mms_kmr ---
+STATUS ready=True :: النموذج جاهز (16000 Hz | 1 متحدث)
+mms_kmr_long             mode=sherpa-onnx-cpu     spk= 0 chars= 804 audio= 70.31s gen=21.37s RTF= 0.30 16000Hz RMS= 4944.2 size= 2197.3KB
+PYTHON PEAK RSS: 1521.07 MB
+
+--- MMS mms_ara ---
+STATUS ready=True :: النموذج جاهز (16000 Hz | 1 متحدث)
+mms_ara_long             mode=sherpa-onnx-cpu     spk= 0 chars= 784 audio= 85.89s gen=26.09s RTF= 0.30 16000Hz RMS= 3709.5 size= 2684.2KB
+PYTHON PEAK RSS: 1708.22 MB
 
 # وحدة الاختبارات الآلية (mock Piper) في نفس اليوم: Ran 34 tests — OK

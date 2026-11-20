@@ -6,6 +6,7 @@
     "cpu_threads": 12,
     "ram_gb": 15.8
   },
+  "source": "docs/smoke_results_2026-11-20.txt (every value below is a logged row)",
   "profiles": {
     "piper_kmr": {
       "engine": "Piper VITS CLI 2023.11.14-2 (persistent --json-input)",
@@ -15,31 +16,37 @@
       "default_speaker": 54,
       "short": {
         "chars": 62,
-        "gen_s": 1.15,
-        "rtf": 0.2
+        "gen_s": 1.04,
+        "rtf": 0.19
       },
       "medium": {
         "chars": 173,
-        "gen_s": 0.97,
-        "rtf": 0.08
+        "gen_s": 0.84,
+        "rtf": 0.07
       },
       "long": {
         "chars": 816,
-        "gen_s": 4.69,
-        "rtf": 0.08
+        "gen_s": 3.95,
+        "rtf": 0.06
       },
-      "memory_mb_approx": 198
+      "memory_mb_approx": 120
     },
     "mms_kmr": {
       "engine": "sherpa-onnx OfflineTts CPU",
       "model": "Meta MMS-TTS Kurmanji",
       "sample_rate": 16000,
       "speakers": 1,
+      "short": {
+        "chars": 60,
+        "gen_s": 1.29,
+        "audio_s": 4.7,
+        "rtf": 0.27
+      },
       "long": {
-        "chars": 657,
-        "gen_s": 21.11,
-        "audio_s": 53.5,
-        "rtf": 0.395
+        "chars": 804,
+        "gen_s": 21.37,
+        "audio_s": 70.31,
+        "rtf": 0.3
       }
     },
     "mms_ara": {
@@ -47,13 +54,25 @@
       "model": "Meta MMS-TTS Arabic",
       "sample_rate": 16000,
       "speakers": 1,
+      "short": {
+        "chars": 97,
+        "gen_s": 3.18,
+        "audio_s": 10.42,
+        "rtf": 0.3
+      },
       "long": {
-        "chars": 653,
-        "gen_s": 13.16,
-        "audio_s": 76.02,
-        "rtf": 0.173
+        "chars": 784,
+        "gen_s": 26.09,
+        "audio_s": 85.89,
+        "rtf": 0.3
       }
     }
+  },
+  "memory": {
+    "piper_worker_mb": 119.85,
+    "peak_rss_mb_short_inputs": 368.58,
+    "peak_rss_mb_long_mms_kmr": 1521.07,
+    "peak_rss_mb_long_mms_ara": 1708.22
   },
   "tests": {
     "passed": 34,

@@ -14,7 +14,7 @@ TITLE_KU = ("Sêwirandin û pêşxistina pergaleke zîrek ji bo veguherandina ni
 
 def build_references(doc, ctx) -> None:
     T.new_page(doc)
-    D.heading(doc, "المراجع والمصادر", 1, rtl=True, align="center", space_after=16)
+    D.heading(doc, "المراجع والمصادر", 1, rtl=True, align="start", space_after=16)
     T.body_plain(doc, "اعتُمد نظام APA الإصدار السابع في توثيق المراجع، ورُتّبت "
                       "المراجع العربية أولاً ثم الأجنبية، وكلاهما ترتيب هجائي.")
 
@@ -96,7 +96,7 @@ def build_appendices(doc, ctx) -> None:
     # ---------------------------------------------------------------- Appendix A
     open_appendix("أ")
     T.new_page(doc)
-    D.heading(doc, "الملحق أ: دليل التثبيت والتشغيل", 1, rtl=True, align="center")
+    D.heading(doc, "الملحق أ: دليل التثبيت والتشغيل", 1, rtl=True, align="start")
     T.h2(doc, "أ-1 المتطلبات المسبقة")
     T.bullets(doc, [
         "Python 3.10 أو أحدث (النسخة المستخدمة في التطوير 3.12 و3.13).",
@@ -127,7 +127,7 @@ def build_appendices(doc, ctx) -> None:
     # ---------------------------------------------------------------- Appendix B
     open_appendix("ب")
     T.new_page(doc)
-    D.heading(doc, "الملحق ب: سجل القرارات الهندسية", 1, rtl=True, align="center")
+    D.heading(doc, "الملحق ب: سجل القرارات الهندسية", 1, rtl=True, align="start")
     T.body(doc, "يوثّق هذا الملحق القرارات التي غيّرت مسار المشروع، والبديل الذي رُفض، "
                 "والسبب الذي رجّح القرار المنفَّذ. والغرض منه أن يعرف القارئ لماذا "
                 "يبدو الكود كما يبدو، لا كيف يعمل فقط.")
@@ -147,7 +147,7 @@ def build_appendices(doc, ctx) -> None:
     # ---------------------------------------------------------------- Appendix C
     open_appendix("ج")
     T.new_page(doc)
-    D.heading(doc, "الملحق ج: حالات الاختبار", 1, rtl=True, align="center")
+    D.heading(doc, "الملحق ج: حالات الاختبار", 1, rtl=True, align="start")
     T.body(doc, "يُعرض هنا نموذج من حالات الاختبار المهمة مع المدخل المتوقع والمخرج "
                 "الفعلي. والحزمة الكاملة (34 اختباراً) موجودة في "
                 "tests/test_kurmanji_tts.py.")
@@ -170,7 +170,7 @@ def build_appendices(doc, ctx) -> None:
     # ---------------------------------------------------------------- Appendix D
     open_appendix("د")
     T.new_page(doc)
-    D.heading(doc, "الملحق د: استبيان التقييم السمعي", 1, rtl=True, align="center")
+    D.heading(doc, "الملحق د: استبيان التقييم السمعي", 1, rtl=True, align="start")
     T.body(doc, "الغرض: قياس جودة النطق في الأنماط الثلاثة بمقياس من خمس درجات. "
                 "لم تُنفَّذ الجلسات بعد، وهذا الملحق هو الأداة الجاهزة لتنفيذها.")
     T.h2(doc, "د-1 بيانات المشارك")
@@ -198,7 +198,7 @@ def build_appendices(doc, ctx) -> None:
     # ---------------------------------------------------------------- Appendix E
     open_appendix("هـ")
     T.new_page(doc)
-    D.heading(doc, "الملحق هـ: استكشاف الأخطاء وإصلاحها", 1, rtl=True, align="center")
+    D.heading(doc, "الملحق هـ: استكشاف الأخطاء وإصلاحها", 1, rtl=True, align="start")
     T.table(doc, ctx, "الأعراض والأسباب والحلول", [
         ["العرض", "السبب المحتمل", "الحل"],
         ["«محرك Piper غير موجود»", "لم يُشغَّل setup_runtime أو المسار خاطئ", "شغّل setup_runtime أو حدّد المسار من الإعدادات"],
@@ -240,7 +240,7 @@ def build_abstract_en(doc, ctx) -> None:
         "valid, non-silent audio for all three profiles with no missing Hawar letters. "
         "The real-time factor reached approximately 0.06 for the longest Piper input, "
         "more than sixteen times faster than real time on a laptop CPU, while the MMS "
-        "profiles stayed between 0.17 and 0.30. A human listening test using the MOS "
+        "profiles stayed between 0.27 and 0.30. A human listening test using the MOS "
         "scale has not yet been conducted, and its cells are explicitly marked as "
         "pending in Chapter Four.",
 
@@ -347,7 +347,7 @@ def build_final_covers(doc, ctx) -> None:
     D.para(doc, "[Logoya zanîngehê: Rojava_University_Logo_for_Thesis.jpg]",
            rtl=False, align="center", size=10, color="808080", space_after=16)
 
-    D.para(doc, TITLE_KU, rtl=False, align="center", size=20, bold=True, line=1.5)
+    D.para(doc, TITLE_KU, rtl=False, align="center", size=22, bold=True, line=1.5)
     D.para(doc, "", rtl=False, space_after=10)
     D.para(doc, "Projeya mezûnbûnê ji bo Beşê Endezyariya Komputerê, "
                 "F.Z. Xwezayî û Teknolojî, Zanîngeha Rojava.",

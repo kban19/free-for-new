@@ -112,14 +112,15 @@ def make_charts(perf: dict, rows: list) -> dict:
     cases = [r for r in rows if r["name"] in (
         "oneshot_short_spk54", "oneshot_medium_spk54", "oneshot_long_spk3",
         "persist_short_spk54", "persist_medium_spk54", "persist_long_spk3",
-        "mms_kmr_short", "mms_ara_arabic")]
+        "mms_kmr_short", "mms_ara_arabic", "mms_kmr_long", "mms_ara_long")]
     if cases:
         labels = [c["name"].replace("_spk54", "").replace("_spk3", "")
                   .replace("_arabic", "") for c in cases]
         values = [c["rtf"] for c in cases]
+        colors = ["#8C5A2E" if c["engine"].startswith("mms") else "#2E5E8C"
+                  for c in cases]
         fig, ax = plt.subplots(figsize=(7.4, 3.9))
-        bars = ax.bar(range(len(cases)), values,
-                      color=["#2E5E8C"] * 6 + ["#8C5A2E"] * 2)
+        bars = ax.bar(range(len(cases)), values, color=colors)
         ax.set_xticks(range(len(cases)))
         ax.set_xticklabels(labels, rotation=35, ha="right", fontsize=8)
         ax.axhline(1.0, color="#B00020", linestyle="--", linewidth=1)
@@ -139,9 +140,10 @@ def make_charts(perf: dict, rows: list) -> dict:
         ("mms_ara model", 114_017_720 / 1024 / 1024),
     ]
     memory = [
-        ("Piper worker", 119.85),
-        ("Python peak", 368.58),
-        ("Perf estimate", float(perf["profiles"]["piper_kmr"]["memory_mb_approx"])),
+        ("Piper worker", perf["memory"]["piper_worker_mb"]),
+        ("Peak, short text", perf["memory"]["peak_rss_mb_short_inputs"]),
+        ("Peak, long mms_kmr", perf["memory"]["peak_rss_mb_long_mms_kmr"]),
+        ("Peak, long mms_ara", perf["memory"]["peak_rss_mb_long_mms_ara"]),
     ]
     fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.4))
     for ax, data, title, color in (

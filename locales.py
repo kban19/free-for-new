@@ -2,7 +2,14 @@
 # Proprietary and Confidential. Unauthorized copying, distribution, or modification
 # of this file, via any medium, is strictly prohibited.
 
-"""UI translations for Kurmanji-TTS (Arabic / Kurmanji / English)."""
+"""UI translations for Kurmanji-TTS (Arabic / Kurmanji / English).
+
+Every language maps the same keys, in the same order, grouped as:
+window chrome, counters, editor, engine, voice controls, player, window
+actions, errors and status, validation, then the settings-dialog fragments.
+The suite checks that the three key sets stay identical, so a new string must
+be added to all three dictionaries in the same group.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +20,13 @@ RTL_LANGUAGES = ("ar",)
 
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "ar": {
+        # ------------------------------------------------------ window chrome
         "app_subtitle": "تحويل النص الكورمانجي إلى كلام - محلي بالكامل (CPU)",
         "model_checking": "جاري فحص النموذج...",
         "model_ready": "النموذج جاهز",
         "model_not_ready": "النموذج أو المحرك غير جاهز",
         "close_notification": "إغلاق التنبيه",
+        # ----------------------------------------------------------- counters
         "label_chars": "الأحرف:",
         "label_words": "الكلمات:",
         "label_hawar": "حروف Hawar المكتشفة:",
@@ -29,6 +38,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "voice_language_tooltip": "اختر لغة النطق: الكورمانجية أو العربية",
         "input_label_ar": "النص العربي",
         "input_hint_ar": "اكتب نصاً عربياً: مرحباً، كيف حالك؟",
+        # ------------------------------------------------------------- engine
         "engine_profile": "محرك النطق",
         "engine_profile_tooltip": "اختر محرك التوليد ونموذج اللغة",
         "profile_piper_kmr": "Kurmancî — Piper (90 Speakers)",
@@ -46,6 +56,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "pause": "إيقاف مؤقت",
         "stop": "إيقاف",
         "save_wav": "حفظ WAV",
+        # ------------------------------------------------------------- player
         "metric_gen": "زمن التوليد:",
         "metric_duration": "مدة الصوت:",
         "metric_rtf": "\u2066RTF\u2069:",
@@ -76,6 +87,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_note": "ملاحظة: يعمل التطبيق محلياً بالكامل على المعالج \u2066(CPU)\u2069 دون اتصال بالإنترنت.",
         "cancel": "إلغاء",
         "save_settings": "حفظ الإعدادات",
+        # --------------------------------------------------- errors and status
         "err_model_missing": "ملف النموذج غير موجود: {path}",
         "err_config_missing": "ملف إعدادات النموذج (.onnx.json) مفقود: {path}",
         "err_config_read": "فشل قراءة ملف JSON للنموذج: {error}",
@@ -96,6 +108,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "validate_too_long": "النص طويل جداً ({count} حرف). الحد الأقصى المسموح هو {maximum} حرف.",
         "validate_symbols": "النص يحتوي على رموز فقط دون كلمات قابلة للنطق.",
         "err_export_no_wav": "لا يوجد ملف صوتي مولّد حالياً للحفظ.",
+        # ------------------------------------------ settings-dialog fragments
         "input_label_primary": "النص الكورمانجي",
         "input_label_secondary": "(Nivîsa Kurmancî)",
         "settings_title_primary": "إعدادات",
@@ -108,11 +121,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_note_clean": "ملاحظة: يعمل التطبيق محلياً بالكامل على المعالج دون اتصال بالإنترنت.",
     },
     "ku": {
+        # ------------------------------------------------------ window chrome
         "app_subtitle": "Nivîsê Kurmancî bikin deng - bi temamî herêmî (CPU)",
         "model_checking": "Model tê kontrolkirin...",
         "model_ready": "Model amade ye",
         "model_not_ready": "Model an motor ne amade ye",
         "close_notification": "Agahiyê bigire",
+        # ----------------------------------------------------------- counters
         "label_chars": "Tîp:",
         "label_words": "Peyv:",
         "label_hawar": "Tîpên Hawarê yên hatine dîtin:",
@@ -124,6 +139,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "voice_language_tooltip": "Zimanê axaftinê hilbijêre: Kurmancî an Erebî",
         "input_label_ar": "Nivîsa Erebî",
         "input_hint_ar": "Nivîseke Erebî binivîse: مرحباً، كيف حالك؟",
+        # ------------------------------------------------------------- engine
         "engine_profile": "Motorê deng",
         "engine_profile_tooltip": "Motorê çêkirinê û modela zimanê hilbijêre",
         "profile_piper_kmr": "Kurmancî — Piper (90 Speakers)",
@@ -141,6 +157,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "pause": "Rawestîne",
         "stop": "Bidawî bike",
         "save_wav": "WAV hilîne",
+        # ------------------------------------------------------------- player
         "metric_gen": "Dema çêkirinê:",
         "metric_duration": "Dema deng:",
         "metric_rtf": "RTF:",
@@ -171,6 +188,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_note": "Têbînî: sepan bi tevahî herêmî li ser CPU-ê dixebite, bê înternet.",
         "cancel": "Betal",
         "save_settings": "Mîhengan qeyd bike",
+        # --------------------------------------------------- errors and status
         "err_model_missing": "Pelê modelê nehat dîtin: {path}",
         "err_config_missing": "Pelê mîhengên modelê (.onnx.json) tune ye: {path}",
         "err_config_read": "Xwendina JSON a modelê têk çû: {error}",
@@ -191,6 +209,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "validate_too_long": "Nivîs pir dirêj e ({count} tîp). Sînor {maximum} tîp e.",
         "validate_symbols": "Nivîs tenê nîşane ye û peyvên bilêvkirinê tune ne.",
         "err_export_no_wav": "Tu pelê dengî yê çêkirî tune ye bo qeydkirinê.",
+        # ------------------------------------------ settings-dialog fragments
         "input_label_primary": "Nivîsa Kurmancî",
         "input_label_secondary": "",
         "settings_title_primary": "Mîhengên Kurmanji-TTS",
@@ -203,11 +222,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_note_clean": "Têbînî: sepan bi tevahî herêmî li ser CPU-ê dixebite, bê înternet.",
     },
     "en": {
+        # ------------------------------------------------------ window chrome
         "app_subtitle": "Offline Kurmanji Neural Text-to-Speech (CPU)",
         "model_checking": "Checking model...",
         "model_ready": "Model Ready",
         "model_not_ready": "Model or engine not ready",
         "close_notification": "Dismiss notification",
+        # ----------------------------------------------------------- counters
         "label_chars": "Characters:",
         "label_words": "Words:",
         "label_hawar": "Hawar letters found:",
@@ -219,6 +240,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "voice_language_tooltip": "Choose the speech language: Kurmanji or Arabic",
         "input_label_ar": "Arabic text",
         "input_hint_ar": "Type Arabic text: مرحباً، كيف حالك؟",
+        # ------------------------------------------------------------- engine
         "engine_profile": "Voice engine",
         "engine_profile_tooltip": "Choose the synthesis engine and language model",
         "profile_piper_kmr": "Kurmancî — Piper (90 Speakers)",
@@ -236,6 +258,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "pause": "Pause",
         "stop": "Stop",
         "save_wav": "Save WAV",
+        # ------------------------------------------------------------- player
         "metric_gen": "Generation time:",
         "metric_duration": "Audio duration:",
         "metric_rtf": "RTF:",
@@ -266,6 +289,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_note": "Note: the app runs fully locally on CPU, without internet access.",
         "cancel": "Cancel",
         "save_settings": "Save settings",
+        # --------------------------------------------------- errors and status
         "err_model_missing": "Model file not found: {path}",
         "err_config_missing": "Model config (.onnx.json) not found: {path}",
         "err_config_read": "Could not read the model JSON: {error}",
@@ -286,6 +310,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "validate_too_long": "Text is too long ({count} characters). Maximum allowed is {maximum}.",
         "validate_symbols": "The text contains only symbols with no pronounceable words.",
         "err_export_no_wav": "No generated audio file is available to save.",
+        # ------------------------------------------ settings-dialog fragments
         "input_label_primary": "Kurmanji text",
         "input_label_secondary": "(Nivîsa Kurmancî)",
         "settings_title_primary": "Kurmanji-TTS Settings",

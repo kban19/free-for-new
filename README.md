@@ -2,7 +2,7 @@
 
 تطبيق سطح مكتب احترافي لتحويل النص المكتوب باللغة الكردية الكورمانجية (**Kurmanji - أبجدية Hawar اللاتينية**) إلى كلام صوتي طبيعي (**Text-to-Speech**) يعمل محلياً بالكامل دون الحاجة إلى اتصال بالإنترنت أو بطاقة رسوميات (GPU).
 
-> **بيئة مُختبرة فعلياً (2026-11-18 على Windows 11):** Python 3.12.11، Flet 0.86.5، flet-audio 0.86.5، Piper CLI 2023.11.14-2، نموذج `atenax/kurmanci-tts-piper` (MIT، 73.65 MB، 22050 Hz، 90 متحدثاً، المتحدث الموصى به 54). جميع الاختبارات (9/9 + اختبار المحرك الحقيقي) نجحت.
+> **بيئة مُختبرة فعلياً (2026-11-20 على Windows 11):** Python 3.12.11، Flet 0.86.5، Piper CLI 2023.11.14-2، sherpa-onnx 2.0.1، نموذج `atenax/kurmanci-tts-piper` (MIT، 73.65 MB، 22050 Hz، 90 متحدثاً، المتحدث الموصى به 54). الاختبارات الآلية **34/34** نجحت، واختبار المحرك الحقيقي أنتج ملفات صوتية سليمة في الأنماط الثلاثة.
 
 ---
 
@@ -22,25 +22,33 @@
 ## 2. هيكلية المشروع
 ```text
 kurmanji-tts/
-├── main.py                    # واجهة التطبيق الرسومية (Flet UI)
-├── config.py                  # إدارة المسارات واكتشاف النظام وحفظ الإعدادات
-├── text_utils.py              # معالجة وتطبيع النصوص الكورمانجية (NFC)
-├── tts_engine.py              # محرك Piper المعزول (Persistent & Single-Shot CLI)
-├── audio_player.py            # إدارة ملفات WAV المؤقتة وحساب المدة وحالات التشغيل
-├── setup_runtime.py           # أداة تنزيل محرك Piper ونموذج atenax تلقائياً
-├── requirements.txt           # اعتماديات Python
-├── THIRD-PARTY-LICENSES.md    # إشعارات وتراخيص المكونات الخارجية
-├── models/
-│   ├── model.onnx             # أوزان النموذج (يجلبها setup_runtime.py)
-│   ├── model.onnx.json        # إعدادات النموذج والمتحدثين
-│   ├── speaker_metadata.json  # أسماء المتحدثين ونوع الصوت والافتراضي
-│   └── pronunciation_dict.json # تصحيحات نطق eSpeak NG (قابلة للتعديل)
+├── main.py                     # النافذة: بناء الحالة، توصيل الأحداث، main() القصيرة
+├── ui_components.py            # بناء عناصر الواجهة (Flet) بلا حالة ولا محرك
+├── config.py                   # إدارة المسارات واكتشاف النظام وحفظ الإعدادات
+├── text_utils.py               # معالجة وتطبيع النصوص الكورمانجية (NFC)
+├── tts_engine.py               # المحركات الثلاثة خلف عقد واحد: Piper + MMS
+├── audio_player.py             # إدارة ملفات WAV المؤقتة والتشغيل الداخلي
+├── setup_runtime.py            # أداة تنزيل محرك Piper والنماذج تلقائياً
+├── requirements.txt            # اعتماديات Python
+├── THIRD-PARTY-LICENSES.md     # إشعارات وتراخيص المكونات الخارجية
+├── models/                     # الأوزان وملفات الإعداد (يجلبها setup_runtime.py)
+├── piper/                      # محرك Piper التنفيذي
 ├── scripts/
-│   ├── build_windows.bat      # سكريبت بناء نسخة Windows المستقلة
-│   └── build_linux.sh         # سكريبت بناء نسخة Linux المستقلة
+│   ├── build_windows.bat       # بناء نسخة Windows المستقلة
+│   ├── build_linux.sh          # بناء نسخة Linux المستقلة
+│   ├── build_thesis.py         # بناء الأطروحة .docx من بيانات المستودع
+│   ├── audit_docx.py           # فحص OOXML واتجاه النص في الأطروحة
+│   └── thesis_*.py             # وحدات الأطروحة: الغلاف والفصول والملاحق
+├── docs/
+│   ├── CODE_WALKTHROUGH_AR.md  # شرح الكود خطوة بخطوة وأسئلة المناقشة
+│   ├── Kurmanji-TTS_Thesis_Rojava.docx / .pdf
+│   ├── performance_data.json   # كل رقم أداء في الفصل الرابع
+│   ├── smoke_results_2026-11-20.txt
+│   └── legacy/                 # نسخة التقرير القديمة (للمرجعية فقط)
 └── tests/
-    ├── mock_piper.py          # محاكي Piper للاختبارات الآلية
-    └── test_kurmanji_tts.py   # حزمة الاختبارات الشاملة
+    ├── mock_piper.py           # محاكي Piper للاختبارات الآلية
+    ├── real_engine_smoke.py    # اختبار النماذج الحقيقية وقياس الأداء
+    └── test_kurmanji_tts.py    # حزمة الاختبارات الشاملة (34 اختباراً)
 ```
 
 ---
@@ -131,3 +139,21 @@ chmod +x scripts/build_linux.sh
 ثبّت حزم الوسائط `sudo apt install -y gstreamer1.0-plugins-base gstreamer1.0-plugins-good libmpv2`. وفي حال عدم توفرها، يقوم التطبيق تلقائياً بفتح الملف الصوتي عبر مشغل النظام الافتراضي.
 * **بطء أول عملية توليد فقط:**
 في أول مرة يتم تحميل أوزان الشبكة العصبية إلى الذاكرة العشوائية (RAM). بفضل تفعيل خيار **إبقاء النموذج محمّلاً في الذاكرة** في الإعدادات، ستكون العمليات التالية فورية تقريباً.
+
+---
+
+## 7. الوثائق
+
+* `docs/CODE_WALKTHROUGH_AR.md` — شرح كل ملف خطوة بخطوة وأسئلة لجنة المناقشة.
+* `docs/Kurmanji-TTS_Thesis_Rojava.docx` و`.pdf` — الأطروحة النهائية (60 صفحة) بصيغة جامعة روجآفا.
+* `docs/performance_data.json` و`docs/smoke_results_2026-11-20.txt` — كل رقم في الأطروحة ومصدره الخام.
+* `docs/legacy/` — نسخة التقرير القديمة، محفوظة للمرجعية فقط.
+
+إعادة بناء الأطروحة:
+
+```bash
+python scripts/build_thesis.py
+python scripts/audit_docx.py docs/Kurmanji-TTS_Thesis_Rojava.docx
+```
+
+> الأطروحة تُبنى بسكربتات Python (`python-docx` + OOXML) لا يدوياً، لذلك كل جدول ورقم فيها قابل لإعادة التوليد من المستودع.
