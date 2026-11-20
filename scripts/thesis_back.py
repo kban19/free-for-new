@@ -14,7 +14,7 @@ TITLE_KU = ("Sêwirandin û pêşxistina pergaleke zîrek ji bo veguherandina ni
 
 def build_references(doc, ctx) -> None:
     T.new_page(doc)
-    D.heading(doc, "المراجع والمصادر", 1, rtl=True, align="start", space_after=16)
+    D.heading(doc, "المراجع والمصادر", 1, rtl=True, align="center", space_after=16)
     T.body_plain(doc, "اعتُمد نظام APA الإصدار السابع في توثيق المراجع، ورُتّبت "
                       "المراجع العربية أولاً ثم الأجنبية، وكلاهما ترتيب هجائي.")
 
