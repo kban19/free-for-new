@@ -1,0 +1,36 @@
+# Python & Virtual Environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.build-venv/
+
+# Large Model Weights & External Binaries (managed via setup_runtime.py)
+models/*.onnx
+models/**/*.onnx
+piper/windows/
+piper/linux/
+piper/*.zip
+piper/*.tar.gz
+*.onnx
+
+# Build & Packaging Artifacts
+build/
+dist/
+*.spec
+
+# Logs & Temporary Audio
+*.log
+*.wav
+.pytest_cache/
+tests/__pycache__/
+tests/real_output/
+
+# Local-only / tooling
+.freebuff/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
