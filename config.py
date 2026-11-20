@@ -2,7 +2,14 @@
 # Proprietary and Confidential. Unauthorized copying, distribution, or modification
 # of this file, via any medium, is strictly prohibited.
 
-"""Application configuration, cross-platform path resolution, and settings persistence."""
+"""Application constants, cross-platform path resolution and settings persistence.
+
+This module is the single source of truth for every path the app touches. It is
+the only place that knows how a frozen PyInstaller build finds its own folder,
+and the only place that decides where ``settings.json`` lives. Every other
+module asks ``config`` instead of guessing a relative path, which is exactly what
+keeps the packaged ``.exe`` working once the source tree is gone.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +33,13 @@ ENGINE_PROFILES = ("piper_kmr", "mms_kmr", "mms_ara")
 
 
 def get_app_root() -> Path:
-    """Return the root directory of the application (supports frozen PyInstaller builds)."""
+    """Return the application root, whether running from source or a frozen build.
+
+    A frozen build unpacks its Python modules into a temporary folder, so
+    ``Path(__file__).parent`` would point at a throw-away directory. Using the
+    executable's own folder is what lets ``models/`` and ``piper/`` sit next to
+    ``Kurmanji-TTS.exe`` after packaging.
+    """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
@@ -118,6 +131,77 @@ def discover_default_piper(piper_dir: Path) -> Path:
     return candidates[0]
 
 
+def _safe_settings_version(raw: dict) -> int:
+    """Read ``settings_version`` defensively; a corrupted value means "oldest"."""
+    try:
+        return int(raw.get("settings_version", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _migrate_noise_defaults(raw: dict) -> None:
+    """v1 -> v2: swap the model's stock noise values for the tuned defaults.
+
+    Only the untouched stock numbers are rewritten, so a user who deliberately
+    picked other values keeps them.
+    """
+    try:
+        if abs(float(raw.get("noise_scale", 0.52)) - 0.52) < 1e-9:
+            raw["noise_scale"] = 0.35
+        if abs(float(raw.get("noise_w", 0.58)) - 0.58) < 1e-9:
+            raw["noise_w"] = 0.45
+    except (TypeError, ValueError):
+        pass
+    raw["settings_version"] = 2
+
+
+def _migrate_length_scale_to_speed(raw: dict) -> None:
+    """v2 -> v3: v2 stored Piper's ``length_scale``; the UI now stores speed.
+
+    ``length_scale`` is the inverse of speed (a longer scale is a slower voice),
+    so the old value is inverted once here and then dropped for good.
+    """
+    old_length_scale = raw.pop("length_scale", None)
+    if old_length_scale is not None:
+        try:
+            old_value = float(old_length_scale)
+            if old_value > 0:
+                raw["speech_speed"] = max(0.5, min(1.5, round(1.0 / old_value, 3)))
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+    raw["settings_version"] = 3
+
+
+def _migrate_engine_profile(raw: dict) -> None:
+    """Derive ``engine_profile`` for builds that only stored a speech language."""
+    if "engine_profile" not in raw:
+        raw["engine_profile"] = "mms_ara" if raw.get("tts_language") == "ar" else "piper_kmr"
+
+
+def _migrate_ui_language(raw: dict) -> None:
+    """v3 -> v4: Arabic was the only interface language before v4."""
+    raw.setdefault("ui_language", "ar")
+    raw["settings_version"] = 4
+
+
+def migrate_settings(raw: dict) -> dict:
+    """Upgrade an on-disk settings dict to the current schema, step by step.
+
+    Each version jump is its own small function so a reviewer can read the file
+    format's history in order. The version is read once, before any change, so
+    a very old file still passes through every intermediate step.
+    """
+    version = _safe_settings_version(raw)
+    if version < 2:
+        _migrate_noise_defaults(raw)
+    if version < 3:
+        _migrate_length_scale_to_speed(raw)
+    _migrate_engine_profile(raw)
+    if version < 4:
+        _migrate_ui_language(raw)
+    return raw
+
+
 @dataclass
 class AppSettings:
     """Persistent user and engine settings for Kurmanji-TTS."""
@@ -161,56 +245,25 @@ class AppSettings:
 
     @classmethod
     def load(cls, config_file: Optional[Path] = None) -> "AppSettings":
-        """Load settings from disk or return validated defaults."""
+        """Load settings from disk, or return validated defaults.
+
+        A missing, unreadable or half-written ``settings.json`` must never stop
+        the app from starting, so every failure path falls back to ``cls()``.
+        Unknown keys written by a newer build are dropped instead of crashing
+        the dataclass constructor.
+        """
         target = config_file or (get_user_config_dir() / "settings.json")
-        if target.exists():
-            try:
-                raw = json.loads(target.read_text(encoding="utf-8"))
-                try:
-                    version = int(raw.get("settings_version", 1))
-                except (TypeError, ValueError):
-                    version = 1
-                if version < 2:
-                    # v1 stored the model's generic voice settings. Upgrade only
-                    # those exact values; preserve any user-customised tweaks.
-                    try:
-                        if abs(float(raw.get("noise_scale", 0.52)) - 0.52) < 1e-9:
-                            raw["noise_scale"] = 0.35
-                        if abs(float(raw.get("noise_w", 0.58)) - 0.58) < 1e-9:
-                            raw["noise_w"] = 0.45
-                    except (TypeError, ValueError):
-                        pass
-                    raw["settings_version"] = 2
-                if version < 3:
-                    # v2 stored Piper's length_scale directly as the "speed".
-                    # Convert it to the inverse speech speed used by the UI.
-                    old_length_scale = raw.get("length_scale")
-                    if old_length_scale is not None:
-                        try:
-                            old_value = float(old_length_scale)
-                            if old_value > 0:
-                                raw["speech_speed"] = max(
-                                    0.5, min(1.5, round(1.0 / old_value, 3))
-                                )
-                        except (TypeError, ValueError, ZeroDivisionError):
-                            pass
-                    raw.pop("length_scale", None)
-                    raw["settings_version"] = 3
-                if "engine_profile" not in raw:
-                    # Earlier builds stored only the speech language.
-                    raw["engine_profile"] = (
-                        "mms_ara" if raw.get("tts_language") == "ar" else "piper_kmr"
-                    )
-                if version < 4:
-                    # v3 had no explicit UI language; Arabic was the only UI.
-                    raw.setdefault("ui_language", "ar")
-                    raw["settings_version"] = 4
-                valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
-                filtered = {k: v for k, v in raw.items() if k in valid_keys}
-                return cls(**filtered)
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                pass
-        return cls()
+        if not target.exists():
+            return cls()
+        try:
+            raw = json.loads(target.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                return cls()
+            migrate_settings(raw)
+            valid_keys = {field.name for field in cls.__dataclass_fields__.values()}
+            return cls(**{key: value for key, value in raw.items() if key in valid_keys})
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return cls()
 
     def save(self, config_file: Optional[Path] = None) -> Path:
         """Persist current settings to disk in UTF-8 JSON."""

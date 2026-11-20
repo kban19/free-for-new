@@ -2,17 +2,19 @@
 # Proprietary and Confidential. Unauthorized copying, distribution, or modification
 # of this file, via any medium, is strictly prohibited.
 
-"""Temporary WAV lifecycle management, audio metadata and in-process playback.
+"""Temporary WAV lifecycle, audio metadata and in-process playback.
 
-The player is deliberately implemented with OS primitives that are already part
-of Python (``winmm`` via ctypes on Windows, ``aplay`` on Linux). No external
-media player window is ever opened, and no PyInstaller plugin is required.
+The player deliberately uses OS primitives that already ship with Python:
+``winmm``/MCI through ``ctypes`` on Windows, and the headless ``aplay`` binary on
+Linux. No external media-player window ever opens and no PyInstaller plugin is
+needed, so playback keeps working inside the single packaged ``.exe``.
 """
 
 from __future__ import annotations
 
 import ctypes
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -292,16 +294,29 @@ class _AplayBackend:
         self._length_ms = int(inspect_wav(self._path).duration_seconds * 1000)
         self._offset_ms = 0
 
-    def _spawn(self, offset_ms: int) -> None:
-        if self._path is None:
-            return
-        with wave.open(str(self._path), "rb") as wf:
+    @staticmethod
+    def _read_pcm(path: Path, offset_ms: int) -> "tuple[str, int, int, bytes]":
+        """Slice a WAV into raw PCM and return ``(aplay format, rate, channels, bytes)``.
+
+        ``aplay`` has no seek command, so pause and seek are implemented by
+        restarting it at the right frame. This helper is the only place that
+        converts milliseconds back into a frame index.
+        """
+        with wave.open(str(path), "rb") as wf:
             rate, channels, width = wf.getframerate(), wf.getnchannels(), wf.getsampwidth()
             start = min(wf.getnframes(), int(offset_ms / 1000.0 * rate))
             wf.setpos(start)
             raw = wf.readframes(wf.getnframes() - start)
 
         fmt = "S16_LE" if width == 2 else ("S24_3LE" if width == 3 else "S32_LE")
+        return fmt, rate, channels, raw
+
+    def _spawn(self, offset_ms: int) -> None:
+        """Start ``aplay`` from ``offset_ms`` and feed it PCM on a daemon thread."""
+        if self._path is None:
+            return
+        fmt, rate, channels, raw = self._read_pcm(self._path, offset_ms)
+
         self._proc = subprocess.Popen(
             ["aplay", "-q", "-f", fmt, "-r", str(rate), "-c", str(channels), "-"],
             stdin=subprocess.PIPE,
@@ -334,14 +349,12 @@ class _AplayBackend:
 
     def pause(self) -> None:
         if self._proc is not None and self._proc.poll() is None and not self._paused:
-            import signal
             self._proc.send_signal(signal.SIGSTOP)
             self._offset_ms += int((time.monotonic() - self._started_at) * 1000)
             self._paused = True
 
     def resume(self) -> None:
         if self._proc is not None and self._proc.poll() is None and self._paused:
-            import signal
             self._proc.send_signal(signal.SIGCONT)
             self._started_at = time.monotonic()
             self._paused = False
@@ -350,7 +363,6 @@ class _AplayBackend:
         if self._proc is not None:
             try:
                 if self._proc.poll() is None and self._paused:
-                    import signal
                     self._proc.send_signal(signal.SIGCONT)
                 self._proc.terminate()
                 self._proc.wait(timeout=2)

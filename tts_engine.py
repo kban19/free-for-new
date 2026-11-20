@@ -2,7 +2,15 @@
 # Proprietary and Confidential. Unauthorized copying, distribution, or modification
 # of this file, via any medium, is strictly prohibited.
 
-"""Decoupled Piper TTS engine wrapper with persistent process support and WAV validation."""
+"""TTS engines behind one contract: Piper Kurmanji and the two Meta MMS voices.
+
+Every engine here exposes the same two methods — ``check_status()`` and
+``synthesize()`` — and returns the same ``EngineStatus`` / ``SynthesisResult``
+objects. That shared contract is why the UI never needed to change when the MMS
+engines were added, and why a new voice only has to be registered in
+``UnifiedTTSEngine``. All output passes through ``verify_wav_file`` before it is
+reported as a success.
+"""
 
 from __future__ import annotations
 
@@ -98,68 +106,101 @@ def _load_speaker_display_labels(model_dir: Path) -> Dict[int, str]:
     return labels
 
 
-def parse_model_metadata(model_path: Path, preferred_speaker: int = 54) -> ModelMetadata:
-    """Read and validate <model>.onnx.json metadata and speaker map."""
-    if not model_path.exists():
-        raise TTSEngineError(msg("err_model_missing", path=model_path))
-
+def _resolve_config_path(model_path: Path) -> Path:
+    """Find the ``<model>.onnx.json`` sidecar Piper needs next to the weights."""
     config_path = Path(f"{model_path}.json")
-    if not config_path.exists():
-        alt_config = model_path.with_suffix(".json")
-        if alt_config.exists():
-            config_path = alt_config
-        else:
-            raise TTSEngineError(msg("err_config_missing", path=config_path))
+    if config_path.exists():
+        return config_path
+    alternative = model_path.with_suffix(".json")
+    if alternative.exists():
+        return alternative
+    raise TTSEngineError(msg("err_config_missing", path=config_path))
 
+
+def _load_model_config(config_path: Path) -> dict:
+    """Read the model JSON, turning I/O and syntax errors into one clear message."""
     try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
+        return json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise TTSEngineError(msg("err_config_read", error=exc)) from exc
 
-    audio_cfg = data.get("audio", {})
-    sample_rate = int(audio_cfg.get("sample_rate", 22050))
-    espeak_cfg = data.get("espeak", {})
-    espeak_voice = str(espeak_cfg.get("voice", "ku"))
-    num_speakers = int(data.get("num_speakers", 1))
-    speaker_id_map: Dict[str, int] = data.get("speaker_id_map", {})
 
-    display_labels = _load_speaker_display_labels(model_path.parent)
+def _build_speaker_table(
+    speaker_id_map: Dict[str, int],
+    num_speakers: int,
+    display_labels: Dict[int, str],
+) -> List[Tuple[int, str]]:
+    """Build the ``(id, label)`` list the speaker dropdown shows.
+
+    Models that ship no name map still need a usable list, so we fall back to
+    plain ids; when a human label exists it always wins over a hash such as
+    ``spk_54``.
+    """
+    if not speaker_id_map:
+        return [
+            (sid, display_labels.get(sid, f"Speaker {sid}"))
+            for sid in range(max(1, num_speakers))
+        ]
 
     speakers: List[Tuple[int, str]] = []
-    if speaker_id_map:
-        for name, sid in sorted(speaker_id_map.items(), key=lambda item: int(item[1])):
-            sid_int = int(sid)
-            label = display_labels.get(sid_int)
-            if label is None:
-                label = (
-                    f"Speaker {sid_int} ({name})"
-                    if str(name) != str(sid_int) else f"Speaker {sid_int}"
-                )
-            speakers.append((sid_int, label))
-    else:
-        for sid_int in range(max(1, num_speakers)):
-            speakers.append(
-                (sid_int, display_labels.get(sid_int, f"Speaker {sid_int}"))
+    for name, sid in sorted(speaker_id_map.items(), key=lambda item: int(item[1])):
+        sid_int = int(sid)
+        label = display_labels.get(sid_int)
+        if label is None:
+            label = (
+                f"Speaker {sid_int} ({name})"
+                if str(name) != str(sid_int)
+                else f"Speaker {sid_int}"
             )
+        speakers.append((sid_int, label))
+    return speakers
 
-    available_ids = {sid for sid, _ in speakers}
-    if preferred_speaker in available_ids:
-        default_sid = preferred_speaker
-    elif speakers:
-        default_sid = speakers[0][0]
-    else:
-        default_sid = 0
 
-    size_mb = round(model_path.stat().st_size / (1024 * 1024), 2)
+def _resolve_default_speaker(speakers: List[Tuple[int, str]], preferred: int) -> int:
+    """Honour the configured speaker when the model has it, else take the first."""
+    if preferred in {sid for sid, _ in speakers}:
+        return preferred
+    return speakers[0][0] if speakers else 0
 
-    # The model config records its own recommended synthesis defaults.
+
+def _read_inference_defaults(data: dict) -> Tuple[float, float, float]:
+    """Read the model's own recommended (length_scale, noise_scale, noise_w)."""
     inference_cfg = data.get("inference", {})
 
-    def _inference_float(key: str, fallback: float) -> float:
+    def read_float(key: str, fallback: float) -> float:
         try:
             return float(inference_cfg.get(key, fallback))
         except (TypeError, ValueError):
             return fallback
+
+    return (
+        read_float("length_scale", 1.0),
+        read_float("noise_scale", 0.667),
+        read_float("noise_w", 0.8),
+    )
+
+
+def parse_model_metadata(model_path: Path, preferred_speaker: int = 54) -> ModelMetadata:
+    """Read and validate a Piper ``.onnx`` + ``.onnx.json`` pair.
+
+    Raises ``TTSEngineError`` with a translated message for each failure mode, so
+    the UI can show the real reason instead of a generic "model not ready".
+    """
+    if not model_path.exists():
+        raise TTSEngineError(msg("err_model_missing", path=model_path))
+
+    config_path = _resolve_config_path(model_path)
+    data = _load_model_config(config_path)
+
+    sample_rate = int(data.get("audio", {}).get("sample_rate", 22050))
+    espeak_voice = str(data.get("espeak", {}).get("voice", "ku"))
+    num_speakers = int(data.get("num_speakers", 1))
+    speakers = _build_speaker_table(
+        data.get("speaker_id_map", {}),
+        num_speakers,
+        _load_speaker_display_labels(model_path.parent),
+    )
+    length_scale, noise_scale, noise_w = _read_inference_defaults(data)
 
     return ModelMetadata(
         model_path=model_path,
@@ -168,11 +209,11 @@ def parse_model_metadata(model_path: Path, preferred_speaker: int = 54) -> Model
         espeak_voice=espeak_voice,
         num_speakers=max(num_speakers, len(speakers)),
         speakers=speakers,
-        default_speaker_id=default_sid,
-        model_size_mb=size_mb,
-        inference_length_scale=_inference_float("length_scale", 1.0),
-        inference_noise_scale=_inference_float("noise_scale", 0.667),
-        inference_noise_w=_inference_float("noise_w", 0.8),
+        default_speaker_id=_resolve_default_speaker(speakers, preferred_speaker),
+        model_size_mb=round(model_path.stat().st_size / (1024 * 1024), 2),
+        inference_length_scale=length_scale,
+        inference_noise_scale=noise_scale,
+        inference_noise_w=noise_w,
     )
 
 
@@ -195,6 +236,32 @@ def verify_wav_file(wav_path: Path) -> Tuple[int, float]:
             return rate, duration
     except wave.Error as exc:
         raise TTSEngineError(msg("err_wav_header", error=exc)) from exc
+
+
+def _wait_for_stable_wav(proc: subprocess.Popen, output_wav: Path, timeout: float) -> bool:
+    """Wait until Piper finishes writing, i.e. the WAV stops growing.
+
+    In ``--json-input`` mode Piper prints no per-request acknowledgement, so the
+    only reliable signal that a line was processed is the output file appearing
+    and its size staying identical across two consecutive polls.
+    """
+    deadline = time.monotonic() + timeout
+    last_size = -1
+    stable_ticks = 0
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return False
+        if output_wav.exists():
+            size = output_wav.stat().st_size
+            if size > 44 and size == last_size:
+                stable_ticks += 1
+                if stable_ticks >= 2:
+                    return True
+            else:
+                stable_ticks = 0
+            last_size = size
+        time.sleep(0.025)
+    return False
 
 
 class KurmanjiTTSEngine:
@@ -378,25 +445,8 @@ class KurmanjiTTSEngine:
             proc.stdin.write(line)
             proc.stdin.flush()
 
-            deadline = time.monotonic() + timeout
-            last_size = -1
-            stable_ticks = 0
-            while time.monotonic() < deadline:
-                if proc.poll() is not None:
-                    self.close()
-                    return False
-
-                if output_wav.exists():
-                    size = output_wav.stat().st_size
-                    if size > 44 and size == last_size:
-                        stable_ticks += 1
-                        if stable_ticks >= 2:
-                            return True
-                    else:
-                        stable_ticks = 0
-                    last_size = size
-                time.sleep(0.025)
-
+            if _wait_for_stable_wav(proc, output_wav, timeout):
+                return True
             self.close()
             return False
         except (OSError, BrokenPipeError, ValueError):
@@ -458,6 +508,70 @@ class KurmanjiTTSEngine:
                 )
             )
 
+    def _resolve_synthesis_params(
+        self,
+        meta: ModelMetadata,
+        speaker_id: Optional[int],
+        length_scale: Optional[float],
+        noise_scale: Optional[float],
+        noise_w: Optional[float],
+    ) -> Tuple[float, float, float, int]:
+        """Fill every missing voice parameter from the model's own defaults."""
+        ls = meta.inference_length_scale if length_scale is None else float(length_scale)
+        ns = meta.inference_noise_scale if noise_scale is None else float(noise_scale)
+        nw = meta.inference_noise_w if noise_w is None else float(noise_w)
+        sid = meta.default_speaker_id if speaker_id is None else int(speaker_id)
+        if sid < 0 or sid >= meta.num_speakers:
+            raise TTSEngineError(
+                msg("err_speaker_range", sid=sid, maximum=meta.num_speakers - 1)
+            )
+        return ls, ns, nw, sid
+
+    def _render_wav(
+        self,
+        text: str,
+        output_wav: Path,
+        sid: int,
+        ls: float,
+        ns: float,
+        nw: float,
+        timeout: float,
+    ) -> str:
+        """Run Piper and report which mode produced the file.
+
+        The warm process is tried first. Any failure there (crash, broken pipe,
+        timeout) silently falls back to a one-shot run, so the user still gets
+        audio instead of an error they cannot act on.
+        """
+        def run_oneshot() -> None:
+            self._synthesize_oneshot(
+                text=text,
+                output_wav=output_wav,
+                speaker_id=sid,
+                length_scale=ls,
+                noise_scale=ns,
+                noise_w=nw,
+                timeout=timeout,
+            )
+
+        if not self.use_persistent_process:
+            run_oneshot()
+            return "oneshot-cli"
+
+        warmed = self._synthesize_persistent(
+            text=text,
+            output_wav=output_wav,
+            speaker_id=sid,
+            length_scale=ls,
+            noise_scale=ns,
+            noise_w=nw,
+            timeout=timeout,
+        )
+        if warmed:
+            return "persistent-json-cli"
+        run_oneshot()
+        return "oneshot-cli"
+
     def synthesize(
         self,
         text: str,
@@ -468,64 +582,31 @@ class KurmanjiTTSEngine:
         noise_w: Optional[float] = None,
         timeout: float = 60.0,
     ) -> SynthesisResult:
-        """Convert normalized Kurmanji text to a validated WAV file on CPU."""
+        """Convert normalized Kurmanji text to a validated WAV file on CPU.
+
+        The whole call is held under a re-entrant lock so two quick clicks cannot
+        feed the same warm Piper process at once. The caller is expected to run
+        it on a worker thread (``asyncio.to_thread``), never on the UI thread.
+        """
         with self._lock:
             status = self.check_status()
             if not status.ready or status.metadata is None:
                 raise TTSEngineError(status.message)
 
             meta = status.metadata
-            ls = meta.inference_length_scale if length_scale is None else float(length_scale)
-            ns = meta.inference_noise_scale if noise_scale is None else float(noise_scale)
-            nw = meta.inference_noise_w if noise_w is None else float(noise_w)
-            sid = meta.default_speaker_id if speaker_id is None else int(speaker_id)
-            if sid < 0 or sid >= meta.num_speakers:
-                raise TTSEngineError(
-                    msg("err_speaker_range", sid=sid, maximum=meta.num_speakers - 1)
-                )
+            ls, ns, nw, sid = self._resolve_synthesis_params(
+                meta, speaker_id, length_scale, noise_scale, noise_w
+            )
 
             output_wav = Path(output_wav)
             output_wav.parent.mkdir(parents=True, exist_ok=True)
             if output_wav.exists():
                 output_wav.unlink()
 
-            t0 = time.perf_counter()
-            mode_used = "oneshot-cli"
+            started = time.perf_counter()
+            mode_used = self._render_wav(text, output_wav, sid, ls, ns, nw, timeout)
 
-            if self.use_persistent_process:
-                ok = self._synthesize_persistent(
-                    text=text,
-                    output_wav=output_wav,
-                    speaker_id=sid,
-                    length_scale=ls,
-                    noise_scale=ns,
-                    noise_w=nw,
-                    timeout=timeout,
-                )
-                if ok:
-                    mode_used = "persistent-json-cli"
-                else:
-                    self._synthesize_oneshot(
-                        text=text,
-                        output_wav=output_wav,
-                        speaker_id=sid,
-                        length_scale=ls,
-                        noise_scale=ns,
-                        noise_w=nw,
-                        timeout=timeout,
-                    )
-            else:
-                self._synthesize_oneshot(
-                    text=text,
-                    output_wav=output_wav,
-                    speaker_id=sid,
-                    length_scale=ls,
-                    noise_scale=ns,
-                    noise_w=nw,
-                    timeout=timeout,
-                )
-
-            gen_time = max(1e-6, time.perf_counter() - t0)
+            gen_time = max(1e-6, time.perf_counter() - started)
             sample_rate, duration = verify_wav_file(output_wav)
             rtf = round(gen_time / max(duration, 1e-6), 4)
 
@@ -563,7 +644,12 @@ class KurmanjiTTSEngine:
 
 
 class SherpaMMSEngine:
-    """ sherpa-onnx backed Meta MMS-TTS engine with a warm in-RAM model. """
+    """Meta MMS-TTS voice run through sherpa-onnx, kept warm in RAM.
+
+    MMS models use a single-character vocabulary instead of phonemes, which is why
+    ``text_utils.prepare_text_for_mms`` filters the input first. One model covers
+    one speaker only, so ``speaker_id`` is always 0 here.
+    """
 
     VOICE_LANGS = ("kmr", "ar")
     SPEAKER_LABELS = {"kmr": "MMS Speaker 0", "ar": "MMS Arabic"}
@@ -578,7 +664,40 @@ class SherpaMMSEngine:
     def _paths(self) -> Tuple[Path, Path]:
         return self.model_dir / "model.onnx", self.model_dir / "tokens.txt"
 
+    def _load_sherpa_tts(self, onnx_path: Path, tokens_path: Path):
+        """Import sherpa-onnx and build the VITS pipeline once per process.
+
+        Returns ``(tts, error)``. The model stays in RAM until ``close()``, so a
+        second generation does not pay the ONNX load cost again. Import failures
+        are reported separately from runtime failures: only the first one means
+        the user has to install something.
+        """
+        try:
+            import sherpa_onnx  # type: ignore
+        except ImportError as exc:
+            return None, msg("err_sherpa_missing", error=exc)
+        try:
+            vits = sherpa_onnx.OfflineTtsVitsModelConfig(
+                model=str(onnx_path),
+                tokens=str(tokens_path),
+                noise_scale=0.667,
+                noise_scale_w=0.8,
+                length_scale=1.0,
+            )
+            model_config = sherpa_onnx.OfflineTtsModelConfig(
+                vits=vits, num_threads=2, provider="cpu", debug=False
+            )
+            return (
+                sherpa_onnx.OfflineTts(
+                    sherpa_onnx.OfflineTtsConfig(model=model_config, max_num_sentences=1)
+                ),
+                None,
+            )
+        except Exception as exc:
+            return None, msg("err_sherpa_init", error=exc)
+
     def check_status(self) -> EngineStatus:
+        """Report whether the MMS ONNX pair is present and can be loaded."""
         with self._lock:
             onnx_path, tokens_path = self._paths()
             model_exists = onnx_path.is_file()
@@ -593,37 +712,14 @@ class SherpaMMSEngine:
                 )
 
             if self._tts is None:
-                try:
-                    import sherpa_onnx  # type: ignore
-                except ImportError as exc:
+                self._tts, error = self._load_sherpa_tts(onnx_path, tokens_path)
+                if self._tts is None:
                     return EngineStatus(
                         ready=False,
                         piper_exists=True,
                         model_exists=True,
                         config_exists=True,
-                        message=msg("err_sherpa_missing", error=exc),
-                    )
-                try:
-                    vits = sherpa_onnx.OfflineTtsVitsModelConfig(
-                        model=str(onnx_path),
-                        tokens=str(tokens_path),
-                        noise_scale=0.667,
-                        noise_scale_w=0.8,
-                        length_scale=1.0,
-                    )
-                    model_config = sherpa_onnx.OfflineTtsModelConfig(
-                        vits=vits, num_threads=2, provider="cpu", debug=False
-                    )
-                    self._tts = sherpa_onnx.OfflineTts(
-                        sherpa_onnx.OfflineTtsConfig(model=model_config, max_num_sentences=1)
-                    )
-                except Exception as exc:
-                    return EngineStatus(
-                        ready=False,
-                        piper_exists=True,
-                        model_exists=True,
-                        config_exists=True,
-                        message=msg("err_sherpa_init", error=exc),
+                        message=error or msg("err_unknown"),
                     )
 
             sample_rate = int(self._tts.sample_rate)
@@ -649,6 +745,30 @@ class SherpaMMSEngine:
                 metadata=self._metadata,
             )
 
+    @staticmethod
+    def _write_pcm_wav(output_wav: Path, samples, sample_rate: int) -> None:
+        """Write float samples in [-1, 1] as a 16-bit mono PCM WAV file.
+
+        sherpa-onnx returns floats while ``wave`` wants bytes, so the clamp and
+        the 32767 scaling are what stop loud passages from wrapping into
+        distortion. An empty array means the model produced silence, which we
+        treat as a failure rather than saving an unusable file.
+        """
+        pcm = array.array(
+            "h",
+            (
+                int(max(-1.0, min(1.0, float(sample))) * 32767)
+                for sample in samples
+            ),
+        )
+        if not pcm:
+            raise TTSEngineError(msg("err_wav_frames"))
+        with wave.open(str(output_wav), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm.tobytes())
+
     def synthesize(
         self,
         text: str,
@@ -659,6 +779,7 @@ class SherpaMMSEngine:
         noise_w: Optional[float] = None,
         timeout: float = 60.0,
     ) -> SynthesisResult:
+        """Generate speech with the in-RAM MMS model and save it as WAV."""
         with self._lock:
             status = self.check_status()
             if not status.ready or self._tts is None:
@@ -676,20 +797,7 @@ class SherpaMMSEngine:
 
             t0 = time.perf_counter()
             audio = self._tts.generate(text, sid=0, speed=speed)
-            pcm = array.array(
-                "h",
-                (
-                    int(max(-1.0, min(1.0, float(sample))) * 32767)
-                    for sample in audio.samples
-                ),
-            )
-            if not pcm:
-                raise TTSEngineError(msg("err_wav_frames"))
-            with wave.open(str(output_wav), "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(int(self._tts.sample_rate))
-                wf.writeframes(pcm.tobytes())
+            self._write_pcm_wav(output_wav, audio.samples, int(self._tts.sample_rate))
 
             generation_time = max(1e-6, time.perf_counter() - t0)
             sample_rate, duration = verify_wav_file(output_wav)

@@ -2,7 +2,13 @@
 # Proprietary and Confidential. Unauthorized copying, distribution, or modification
 # of this file, via any medium, is strictly prohibited.
 
-"""One-time runtime fetcher for official Piper binary and atenax/kurmanci-tts-piper model."""
+"""One-time runtime fetcher for the Piper binary and the three speech models.
+
+This script is the only part of the project that touches the network, and it
+runs once per machine. Afterwards the app is fully offline: ``models/`` and
+``piper/`` hold everything the engines need, which is why the packaged ``.exe``
+never asks for a connection again.
+"""
 
 from __future__ import annotations
 
@@ -63,6 +69,47 @@ def _download_file(url: str, dest: Path) -> None:
     print(f"Saved ({dest.stat().st_size / (1024 * 1024):.2f} MB): {dest}")
 
 
+def _extract_archive(archive_path: Path, target_dir: Path) -> None:
+    """Unpack the official Piper release (``.zip`` on Windows, ``.tar.gz`` elsewhere)."""
+    if archive_path.suffix == ".zip":
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            zf.extractall(target_dir)
+    else:
+        with tarfile.open(archive_path, "r:gz") as tf:
+            tf.extractall(target_dir)
+
+
+def _flatten_release_folder(target_dir: Path) -> None:
+    """Move an archive's inner ``piper/`` folder up one level.
+
+    The release archives contain a single nested ``piper`` directory. Keeping it
+    would leave the executable at ``piper/windows/piper/piper.exe``, a path that
+    ``config.discover_default_piper`` never looks at.
+    """
+    nested = target_dir / "piper"
+    if not nested.is_dir():
+        return
+    for item in nested.iterdir():
+        dest = target_dir / item.name
+        if dest.exists():
+            shutil.rmtree(dest) if dest.is_dir() else dest.unlink()
+        shutil.move(str(item), str(dest))
+    nested.rmdir()
+
+
+def _select_model_files(siblings: list[str]) -> "tuple[str, str]":
+    """Pick one ``.onnx`` file and its matching ``.onnx.json`` from a HF repo listing."""
+    onnx_files = [name for name in siblings if name.endswith(".onnx")]
+    json_files = [name for name in siblings if name.endswith(".onnx.json")]
+    if not onnx_files or not json_files:
+        raise RuntimeError(
+            f"Could not locate .onnx and .onnx.json files in {HF_REPO}: {siblings}"
+        )
+    onnx_name = onnx_files[0]
+    config_name = f"{onnx_name}.json" if f"{onnx_name}.json" in json_files else json_files[0]
+    return onnx_name, config_name
+
+
 def install_piper(piper_dir: Path) -> Path:
     """Download and extract the official Piper CLI archive for the current OS."""
     system = platform.system()
@@ -81,24 +128,8 @@ def install_piper(piper_dir: Path) -> Path:
     _download_file(archive_url, archive_path)
 
     target_subdir.mkdir(parents=True, exist_ok=True)
-    if archive_path.suffix == ".zip":
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(target_subdir)
-    else:
-        with tarfile.open(archive_path, "r:gz") as tf:
-            tf.extractall(target_subdir)
-
-    nested = target_subdir / "piper"
-    if nested.is_dir():
-        for item in nested.iterdir():
-            dest_item = target_subdir / item.name
-            if dest_item.exists():
-                if dest_item.is_dir():
-                    shutil.rmtree(dest_item)
-                else:
-                    dest_item.unlink()
-            shutil.move(str(item), str(dest_item))
-        nested.rmdir()
+    _extract_archive(archive_path, target_subdir)
+    _flatten_release_folder(target_subdir)
 
     if system != "Windows" and exe_path.exists():
         exe_path.chmod(exe_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -115,23 +146,16 @@ def install_kurmanji_model(models_dir: Path) -> Path:
     with _urlopen(req, timeout=30) as resp:
         repo_info = json.loads(resp.read().decode("utf-8"))
 
-    siblings = [s.get("rfilename", "") for s in repo_info.get("siblings", [])]
-    onnx_files = [f for f in siblings if f.endswith(".onnx")]
-    json_files = [f for f in siblings if f.endswith(".onnx.json")]
-
-    if not onnx_files or not json_files:
-        raise RuntimeError(f"Could not locate .onnx and .onnx.json files in {HF_REPO}: {siblings}")
-
-    onnx_name = onnx_files[0]
-    json_name = f"{onnx_name}.json" if f"{onnx_name}.json" in json_files else json_files[0]
+    siblings = [entry.get("rfilename", "") for entry in repo_info.get("siblings", [])]
+    onnx_name, config_name = _select_model_files(siblings)
 
     local_onnx = models_dir / Path(onnx_name).name
-    local_json = models_dir / Path(json_name).name
+    local_json = models_dir / Path(config_name).name
 
     if not local_onnx.exists():
         _download_file(f"https://huggingface.co/{HF_REPO}/resolve/main/{onnx_name}", local_onnx)
     if not local_json.exists():
-        _download_file(f"https://huggingface.co/{HF_REPO}/resolve/main/{json_name}", local_json)
+        _download_file(f"https://huggingface.co/{HF_REPO}/resolve/main/{config_name}", local_json)
 
     meta = parse_model_metadata(local_onnx, preferred_speaker=54)
     print(

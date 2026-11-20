@@ -2,7 +2,15 @@
 # Proprietary and Confidential. Unauthorized copying, distribution, or modification
 # of this file, via any medium, is strictly prohibited.
 
-"""Kurmanji (Hawar Latin) text normalization, validation, and linguistic helpers."""
+"""Kurmanji (Hawar Latin) text normalization, validation and pronunciation helpers.
+
+Everything between the text box and the engine lives here: NFC composition so
+the Hawar letters are single code points, the checks that reject empty or
+oversized input, and the two "phonetic preparation" paths — one for the eSpeak
+NG voice used by Piper, one for the single-character vocabularies used by the
+Meta MMS models. The text the user sees is never modified; only the copy that
+goes to the engine is rewritten.
+"""
 
 from __future__ import annotations
 
@@ -65,29 +73,28 @@ class TextAnalysis:
     special_chars_found: Tuple[str, ...]
 
 
+def _collapse_inline_spaces(text: str) -> str:
+    """Trim every line and reduce runs of spaces/tabs to a single space."""
+    lines = (_MULTI_SPACE_RE.sub(" ", line).strip() for line in text.split("\n"))
+    return "\n".join(lines)
+
+
 def normalize_kurmanji_text(raw_text: str) -> str:
-    """Normalize Kurmanji text safely without altering meaning or punctuation."""
+    """Normalize Kurmanji text safely without altering meaning or punctuation.
+
+    The order of the four steps is deliberate: NFC first, because ``C`` followed
+    by a combining cedilla must become the single ``\u00c7`` the model's
+    vocabulary knows; then line endings; then invisible control characters; and
+    only then whitespace, so trimming can never split a letter from its mark.
+    """
     if not raw_text:
         return ""
 
-    # 1. Canonical NFC composition for Kurmanji Hawar characters
     text = unicodedata.normalize("NFC", raw_text)
-
-    # 2. Standardize line endings
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-
-    # 3. Remove invisible control characters
     text = _CONTROL_CHARS_RE.sub("", text)
-
-    # 4. Clean horizontal whitespace per line without deleting punctuation
-    cleaned_lines: List[str] = []
-    for line in text.split("\n"):
-        cleaned = _MULTI_SPACE_RE.sub(" ", line).strip()
-        cleaned_lines.append(cleaned)
-
-    text = "\n".join(cleaned_lines)
-    text = _MULTI_NEWLINE_RE.sub("\n\n", text).strip()
-    return text
+    text = _collapse_inline_spaces(text)
+    return _MULTI_NEWLINE_RE.sub("\n\n", text).strip()
 
 
 def analyze_text(raw_text: str) -> TextAnalysis:
@@ -212,8 +219,31 @@ _PERCENT_RE = re.compile(r"\b(\d{1,6})\s*%")
 _NUMBER_RE = re.compile(r"\b(\d{1,6})\b")
 
 
+def _spell_under_thousand(value: int) -> List[str]:
+    """Spell 1..999 as Kurmanji words, without the ``û`` glue between parts."""
+    parts: List[str] = []
+    hundreds, remainder = divmod(value, 100)
+    if hundreds:
+        parts.append(_HUNDREDS[hundreds])
+    if not remainder:
+        return parts
+    if remainder < 10:
+        parts.append(_ONES[remainder])
+    elif remainder < 20:
+        parts.append(_TEENS[remainder])
+    else:
+        tens, ones = divmod(remainder, 10)
+        parts.append(_TENS[tens] if not ones else f"{_TENS[tens]} û {_ONES[ones]}")
+    return parts
+
+
 def kurmanji_number_to_words(n: int) -> str:
-    """Spell an integer 0..999999 in Kurmanji (e.g. 2026 -> du hezar û bîst û şeş)."""
+    """Spell an integer 0..999999 in Kurmanji (e.g. 2026 -> du hezar û bîst û şeş).
+
+    Numbers are spelled out because the eSpeak ``ku`` voice reads digits
+    inconsistently and the MMS alphabet has no digits at all. The two guard
+    clauses keep callers inside the range the lookup tables above cover.
+    """
     if isinstance(n, bool) or not isinstance(n, int):
         raise TypeError("n must be an integer")
     if not 0 <= n <= 999_999:
@@ -221,24 +251,13 @@ def kurmanji_number_to_words(n: int) -> str:
     if n == 0:
         return "sifir"
 
-    parts: List[str] = []
     thousands, rest = divmod(n, 1000)
+    parts: List[str] = []
     if thousands:
-        parts.append("hezar" if thousands == 1 else f"{kurmanji_number_to_words(thousands)} hezar")
-
-    if rest:
-        hundreds, remainder = divmod(rest, 100)
-        if hundreds:
-            parts.append(_HUNDREDS[hundreds])
-        if remainder:
-            if remainder < 10:
-                parts.append(_ONES[remainder])
-            elif remainder < 20:
-                parts.append(_TEENS[remainder])
-            else:
-                tens, ones = divmod(remainder, 10)
-                parts.append(_TENS[tens] if not ones else f"{_TENS[tens]} û {_ONES[ones]}")
-
+        parts.append(
+            "hezar" if thousands == 1 else f"{kurmanji_number_to_words(thousands)} hezar"
+        )
+    parts.extend(_spell_under_thousand(rest))
     return " û ".join(parts)
 
 
@@ -264,7 +283,34 @@ def _load_pronunciation_dict(dict_path: Optional[Path] = None) -> Dict[str, str]
 
 
 def _spell_acronym(match: "re.Match[str]") -> str:
+    """Spell an ALL-CAPS acronym letter by letter (``PDF`` -> ``pî dî ef``)."""
     return " ".join(_LETTER_SPELLINGS.get(ch, ch.lower()) for ch in match.group(0))
+
+
+def _apply_pronunciation_dict(text: str, dict_path: Optional[Path]) -> str:
+    """Replace whole words using ``models/pronunciation_dict.json``.
+
+    Keys are applied longest-first so a specific rule such as
+    ``Text-to-Speech`` wins over a shorter ``TTS`` one, and the look-around
+    guards keep ``CPU`` from rewriting the letters inside a longer word.
+    """
+    replacements = _load_pronunciation_dict(dict_path)
+    for key in sorted(replacements, key=len, reverse=True):
+        pattern = re.compile(r"(?<!\w)" + re.escape(key) + r"(?!\w)", re.IGNORECASE)
+        text = pattern.sub(replacements[key], text)
+    return text
+
+
+def _spell_numbers_in_kurmanji(text: str) -> str:
+    """Turn ``50%`` and ``2026`` into spoken Kurmanji words.
+
+    Percentages run first so their digits are consumed before the plain-number
+    rule can see them a second time.
+    """
+    text = _PERCENT_RE.sub(
+        lambda m: f"ji sedî {kurmanji_number_to_words(int(m.group(1)))}", text
+    )
+    return _NUMBER_RE.sub(lambda m: kurmanji_number_to_words(int(m.group(1))), text)
 
 
 def prepare_text_for_tts(
@@ -285,28 +331,12 @@ def prepare_text_for_tts(
         return ""
 
     if voice_lang == "ar":
-        # Do not strip tashkeel and do not rewrite numbers for the Arabic voice.
+        # Tashkeel and digits are meaningful for the Arabic voice: keep them.
         return unicodedata.normalize("NFC", normalized_text)
 
-    text = normalized_text
-
-    # 1. External pronunciation overrides (whole-word, case-insensitive).
-    replacements = _load_pronunciation_dict(dict_path)
-    for key in sorted(replacements, key=len, reverse=True):
-        pattern = re.compile(r"(?<!\w)" + re.escape(key) + r"(?!\w)", re.IGNORECASE)
-        text = pattern.sub(replacements[key], text)
-
-    # 2. Percentages and plain integers -> spoken Kurmanji words.
-    text = _PERCENT_RE.sub(
-        lambda m: f"ji sedî {kurmanji_number_to_words(int(m.group(1)))}", text
-    )
-    text = _NUMBER_RE.sub(
-        lambda m: kurmanji_number_to_words(int(m.group(1))), text
-    )
-
-    # 3. Any remaining ALL-CAPS English acronym -> spoken letter names.
-    text = _ACRONYM_RE.sub(_spell_acronym, text)
-    return text
+    text = _apply_pronunciation_dict(normalized_text, dict_path)
+    text = _spell_numbers_in_kurmanji(text)
+    return _ACRONYM_RE.sub(_spell_acronym, text)
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +364,16 @@ def _mms_allowed_chars(voice_lang: str) -> frozenset[str]:
     return frozenset(" abcdefghijklmnopqrstuvwxyzçêîşû'-" if voice_lang == "kmr" else " ابلت")
 
 
+def _strip_to_alphabet(text: str, allowed: frozenset[str]) -> str:
+    """Keep only characters the model's ``tokens.txt`` actually contains.
+
+    sherpa-onnx warns on unknown symbols and can drop a whole sentence, so
+    parentheses, stray punctuation and (for Arabic) tashkeel are removed here
+    rather than left for the engine to trip over.
+    """
+    return "".join(ch for ch in text if ch in allowed)
+
+
 def prepare_text_for_mms(normalized_text: str, voice_lang: str) -> str:
     """Normalize text for a Meta MTS character-vocabulary voice.
 
@@ -348,13 +388,6 @@ def prepare_text_for_mms(normalized_text: str, voice_lang: str) -> str:
 
     if lang == "kmr":
         # sherpa's built-in lowercasing is ASCII-only; normalize here instead.
-        text = text.lower()
-        text = _PERCENT_RE.sub(
-            lambda m: f"ji sedî {kurmanji_number_to_words(int(m.group(1)))}", text
-        )
-        text = _NUMBER_RE.sub(
-            lambda m: kurmanji_number_to_words(int(m.group(1))), text
-        )
+        text = _spell_numbers_in_kurmanji(text.lower())
 
-    allowed = _mms_allowed_chars(lang)
-    return "".join(ch for ch in text if ch in allowed)
+    return _strip_to_alphabet(text, _mms_allowed_chars(lang))

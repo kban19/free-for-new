@@ -1,0 +1,36 @@
+# سجل خام لاختبار المحرك الحقيقي (real_engine_smoke.py)
+# التاريخ: 2026-11-20
+# الأمر: .build-venv\Scripts\python.exe tests\real_engine_smoke.py
+# البيئة: Windows 11 Pro 10.0.26100 | Intel Core i5-10500H @ 2.50GHz | 6 cores / 12 threads | 15.8 GB RAM
+# الغرض: إثبات أن إعادة الهيكلة لم تغيّر سلوك المحركات الثلاثة، وتوفير قياسات قابلة للتحقق.
+
+STATUS ready=True :: النموذج جاهز (22050 Hz | 90 متحدث)
+MODEL model.onnx | 73.65MB | 22050Hz | speakers=90 | default=54 | defaults L=1.02 N=0.52 W=0.58
+
+--- ONE-SHOT CLI ---
+oneshot_short_spk54      mode=oneshot-cli          spk=54 chars=  62 audio=  5.66s gen= 1.15s RTF= 0.20 22050Hz ch=1 RMS= 4261.7 size=  243.8KB hawar_missing=[]
+oneshot_medium_spk54     mode=oneshot-cli          spk=54 chars= 173 audio= 12.64s gen= 1.46s RTF= 0.12 22050Hz ch=1 RMS= 4256.2 size=  544.4KB hawar_missing=[]
+oneshot_long_spk3        mode=oneshot-cli          spk= 3 chars= 816 audio= 62.45s gen= 4.70s RTF= 0.08 22050Hz ch=1 RMS= 4804.4 size= 2689.4KB hawar_missing=[]
+
+--- PERSISTENT JSON CLI ---
+persist_short_spk54      mode=persistent-json-cli  spk=54 chars=  62 audio=  5.44s gen= 1.04s RTF= 0.19 22050Hz ch=1 RMS= 4319.1 size=  234.3KB hawar_missing=[]
+persist_medium_spk54     mode=persistent-json-cli  spk=54 chars= 173 audio= 12.15s gen= 0.84s RTF= 0.07 22050Hz ch=1 RMS= 4025.4 size=  523.4KB hawar_missing=[]
+persist_long_spk3        mode=persistent-json-cli  spk= 3 chars= 816 audio= 61.58s gen= 3.95s RTF= 0.06 22050Hz ch=1 RMS= 5422.3 size= 2651.9KB hawar_missing=[]
+
+--- LENGTH SCALE HONOURED IN PERSISTENT MODE ---
+persist_ls060            mode=persistent-json-cli  spk=54 chars= 173 audio=  8.97s gen= 1.29s RTF= 0.14 22050Hz ch=1 RMS= 4118.8 size=  386.4KB hawar_missing=[]
+persist_ls150            mode=persistent-json-cli  spk=54 chars= 173 audio= 16.57s gen= 1.66s RTF= 0.10 22050Hz ch=1 RMS= 4303.1 size=  713.9KB hawar_missing=[]
+duration ratio ls=1.5 / ls=0.6 = 1.848 (expected > 1.5)
+
+PIPER WORKER PID: 17492 | Working set: 119.85 MB
+
+--- MMS mms_kmr ---
+STATUS ready=True :: النموذج جاهز (16000 Hz | 1 متحدث)
+mms_kmr_short            mode=sherpa-onnx-cpu      spk= 0 chars=  60 audio=  4.70s gen= 1.29s RTF= 0.27 16000Hz RMS= 4901.7 size=  146.8KB
+
+--- MMS mms_ara ---
+STATUS ready=True :: النموذج جاهز (16000 Hz | 1 متحدث)
+mms_ara_arabic           mode=sherpa-onnx-cpu      spk= 0 chars=  97 audio= 10.42s gen= 3.18s RTF= 0.30 16000Hz RMS= 3663.8 size=  325.6KB
+PYTHON PEAK RSS: 368.58 MB
+
+# وحدة الاختبارات الآلية (mock Piper) في نفس اليوم: Ran 34 tests — OK
