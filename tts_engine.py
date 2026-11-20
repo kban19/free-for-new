@@ -638,17 +638,25 @@ class KurmanjiTTSEngine(BaseTTSEngine):
         with self._lock:
             if self._proc is None:
                 return
+            proc = self._proc
             try:
-                if self._proc.stdin:
-                    self._proc.stdin.close()
-                self._proc.terminate()
-                self._proc.wait(timeout=2.0)
+                if proc.stdin:
+                    proc.stdin.close()
+                proc.terminate()
+                proc.wait(timeout=2.0)
             except Exception:
                 try:
-                    self._proc.kill()
+                    proc.kill()
+                    proc.wait(timeout=1.0)
                 except Exception:
                     pass
             finally:
+                for stream in (proc.stdin, proc.stdout, proc.stderr):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
                 self._proc = None
                 self._loaded_model_key = None
 

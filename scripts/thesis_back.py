@@ -142,7 +142,7 @@ def build_appendices(doc, ctx) -> None:
         ["تشغيل داخلي عبر winmm/aplay", "مشغل النظام الخارجي", "تجربة موحّدة بلا نوافذ"],
         ["فصل اتجاه الصفحة عن الحقل", "rtl واحد للكل", "كرمانجية لاتينية داخل واجهة عربية"],
         ["static captions + TOC fields", "SEQ fields لكل تسمية", "طباعة بلا حقول غير محدّثة"],
-    ], widths=[3000, 2600, 3086], size=9)
+    ], widths=[3000, 2600, 3086], size=10)
 
     # ---------------------------------------------------------------- Appendix C
     open_appendix("ج")
@@ -165,7 +165,7 @@ def build_appendices(doc, ctx) -> None:
         ["ترجمة ناقصة", "مفتاح مفقود في لغة", "فشل الاختبار", "نجح"],
         ["مشغل خارجي", "os.startfile في الكود", "فشل الاختبار", "نجح"],
         ["حفظ WAV", "مسار بلا امتداد", "إضافة .wav تلقائياً", "نجح"],
-    ], widths=[2200, 2700, 2686, 1100], size=9)
+    ], widths=[2200, 2700, 2686, 1100], size=10)
 
     # ---------------------------------------------------------------- Appendix D
     open_appendix("د")
@@ -208,7 +208,7 @@ def build_appendices(doc, ctx) -> None:
         ["لا يعمل aplay", "حزمة الصوتيات غير مثبتة", "ثبّت حزم ALSA على Linux"],
         ["نسخة exe لا تجد النماذج", "النماذج ليست بجانب الملف التنفيذي", "انسخ مجلد models بجانب exe"],
         ["فشل التثبيت على MSYS2", "wheel غير متوافق", "استخدم .build-venv"],
-    ], widths=[2500, 2800, 3386], size=9)
+    ], widths=[2500, 2800, 3386], size=10)
 
 
 def build_abstract_en(doc, ctx) -> None:
@@ -312,8 +312,13 @@ def build_final_covers(doc, ctx) -> None:
     D.para(doc, "Department of Computer Engineering - Networks Branch", rtl=False,
            align="center", size=12, space_after=16)
 
-    D.para(doc, "[Official university logo: Rojava_University_Logo_for_Thesis.jpg]",
-           rtl=False, align="center", size=10, color="808080", space_after=16)
+    from pathlib import Path
+    _logo_path = Path(__file__).resolve().parent.parent / "docs" / "assets" / "thesis" / "Rojava_University_Logo_for_Thesis.jpg"
+    if _logo_path.exists():
+        D.add_image(doc, str(_logo_path), width_twips=1928, alt="University of Rojava Logo", rtl=False)
+    else:
+        D.para(doc, "[Official university logo: Rojava_University_Logo_for_Thesis.jpg]",
+               rtl=False, align="center", size=10, color="808080", space_after=16)
 
     D.para(doc, TITLE_EN, rtl=False, align="center", size=22, bold=True, line=1.5)
     D.para(doc, "", rtl=False, space_after=8)
@@ -344,8 +349,11 @@ def build_final_covers(doc, ctx) -> None:
     D.para(doc, "Beşê Endezyariya Komputerê - Şaxa Torên", rtl=False, align="center",
            size=12, space_after=16)
 
-    D.para(doc, "[Logoya zanîngehê: Rojava_University_Logo_for_Thesis.jpg]",
-           rtl=False, align="center", size=10, color="808080", space_after=16)
+    if _logo_path.exists():
+        D.add_image(doc, str(_logo_path), width_twips=1928, alt="Logoya Zanîngeha Rojava", rtl=False)
+    else:
+        D.para(doc, "[Logoya zanîngehê: Rojava_University_Logo_for_Thesis.jpg]",
+               rtl=False, align="center", size=10, color="808080", space_after=16)
 
     D.para(doc, TITLE_KU, rtl=False, align="center", size=22, bold=True, line=1.5)
     D.para(doc, "", rtl=False, space_after=10)

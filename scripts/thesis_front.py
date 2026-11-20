@@ -28,7 +28,12 @@ LOGO_FILE = "Rojava_University_Logo_for_Thesis.jpg"
 
 
 def _logo_placeholder(doc) -> None:
-    """Reserved area for the official logo, clearly marked instead of faked."""
+    """Embed the official Rojava University logo if present, else a clean box."""
+    from pathlib import Path
+    logo_path = Path(__file__).resolve().parent.parent / "docs" / "assets" / "thesis" / LOGO_FILE
+    if logo_path.exists():
+        D.add_image(doc, str(logo_path), width_twips=1650, alt="University of Rojava Logo", rtl=True)
+        return
     p = D.para(doc, "", rtl=True, align="center", space_before=8, space_after=2)
     pPr = p._p.get_or_add_pPr()
     from docx.oxml import OxmlElement
@@ -41,8 +46,6 @@ def _logo_placeholder(doc) -> None:
             e.set(qn("w:" + k), v)
         pBdr.append(e)
     D.add_text(p, LOGO_NOTE, True, size=10, color="808080")
-    # The filename stays on its own LTR line: brackets and colons flip when a
-    # Latin token is embedded at the start of an RTL line.
     D.para(doc, LOGO_FILE, rtl=False, align="center", size=9, color="808080",
            space_before=0, space_after=2)
 
@@ -56,24 +59,17 @@ def build_cover(doc, ctx) -> None:
     T.center_line(doc, DEPARTMENT_AR, size=12)
 
     _logo_placeholder(doc)
-
-    D.para(doc, "", rtl=True, space_after=6)
-    D.para(doc, TITLE_AR, rtl=True, align="center", size=22, bold=True, line=1.5)
-    D.para(doc, "", rtl=True, space_after=10)
+    D.para(doc, TITLE_AR, rtl=True, align="center", size=22, bold=True, line=1.4, space_before=6, space_after=8)
 
     D.para(doc, "مشروع تخرج مقدم إلى قسم هندسة الحاسوب – فرع الشبكات، "
                 "كلية العلوم الطبيعية والتكنولوجيا، جامعة روجآفا، "
                 "استكمالاً لمتطلبات نيل درجة البكالوريوس في هندسة الحاسوب.",
-           rtl=True, align="center", size=14, line=1.5)
-    D.para(doc, "", rtl=True, space_after=10)
+           rtl=True, align="center", size=14, line=1.4, space_after=10)
 
     T.center_line(doc, "إعداد الطلبة:", size=14, bold=True)
     for name, sid in STUDENTS:
         T.center_line(doc, f"{name}   —   {sid}", size=14, space=2)
-
-    D.para(doc, "", rtl=True, space_after=8)
     T.center_line(doc, f"بإشراف: {SUPERVISOR}", size=14, bold=True)
-    D.para(doc, "", rtl=True, space_after=6)
     T.center_line(doc, f"العام الدراسي: {ACADEMIC_YEAR}", size=14, bold=True)
 
 

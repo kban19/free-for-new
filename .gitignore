@@ -33,4 +33,9 @@ tests/real_output/
 .vscode/
 .idea/
 .DS_Store
-Thumbs.db
+Thumbs.db
+
+# Office lock files & temporary thesis scratch
+~$*.docx
+docs/_*
+docs/export_pdf.ps1
